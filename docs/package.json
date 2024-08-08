@@ -13,7 +13,7 @@
     "@crowdin/cli": "^3.10.1",
     "@docusaurus/core": "2.4.0",
     "@docusaurus/preset-classic": "2.4.0",
-    "classnames": "^2.3.2",
+    "classnames": "^2.5.1",
     "jsdoc-to-markdown": "^8.0.0",
     "mkdirp": "^3.0.0",
     "npm-to-yarn": "^2.0.0",
