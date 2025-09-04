@@ -855,7 +855,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				// Optimize: Use shallow copy for flat objects to avoid unnecessary deep copying
 				// Check if the object contains any nested objects that would require deep copying
 				let needsDeepCopy = false;
-				
+
 				// Only perform optimization if keyObj is an object (not a primitive InputKey like string/number)
 				if (typeof keyObj === "object" && keyObj !== null) {
 					for (const key in keyObj) {
@@ -870,7 +870,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 							}
 						}
 					}
-					
+
 					if (needsDeepCopy) {
 						updateObj = utils.deep_copy(keyObj) as Partial<T>;
 					} else {
