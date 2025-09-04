@@ -855,29 +855,36 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				// Optimize: Use shallow copy for flat objects to avoid unnecessary deep copying
 				// Check if the object contains any nested objects that would require deep copying
 				let needsDeepCopy = false;
-				for (const key in keyObj) {
-					const value = keyObj[key];
-					if (value !== null && typeof value === "object") {
-						// Arrays and nested objects need deep copy
-						// Date, Buffer, and typed arrays are OK to shallow copy (immutable or copy-safe)
-						if (Array.isArray(value) || 
-						    (!(value instanceof Date) && !(value instanceof Buffer) && !ArrayBuffer.isView(value))) {
-							needsDeepCopy = true;
-							break;
+				
+				// Only perform optimization if keyObj is an object (not a primitive InputKey like string/number)
+				if (typeof keyObj === "object" && keyObj !== null) {
+					for (const key in keyObj) {
+						const value = keyObj[key];
+						if (value !== null && typeof value === "object") {
+							// Arrays and nested objects need deep copy
+							// Date, Buffer, and typed arrays are OK to shallow copy (immutable or copy-safe)
+							if (Array.isArray(value) ||
+							    (!(value instanceof Date) && !(value instanceof Buffer) && !ArrayBuffer.isView(value))) {
+								needsDeepCopy = true;
+								break;
+							}
 						}
 					}
-				}
-				
-				if (needsDeepCopy) {
-					updateObj = utils.deep_copy(keyObj) as Partial<T>;
-				} else {
-					// Use Object.keys + for loop for best performance across all object sizes
-					updateObj = {} as Partial<T>;
-					const keys = Object.keys(keyObj);
-					for (let i = 0; i < keys.length; i++) {
-						const key = keys[i];
-						updateObj[key] = keyObj[key];
+					
+					if (needsDeepCopy) {
+						updateObj = utils.deep_copy(keyObj) as Partial<T>;
+					} else {
+						// Use Object.keys + for loop for best performance across all object sizes
+						updateObj = {} as Partial<T>;
+						const keys = Object.keys(keyObj);
+						for (let i = 0; i < keys.length; i++) {
+							const key = keys[i];
+							updateObj[key] = keyObj[key];
+						}
 					}
+				} else {
+					// For primitive InputKey types, use deep_copy as before
+					updateObj = utils.deep_copy(keyObj) as Partial<T>;
 				}
 
 				// Cache convertKeyToObject results for performance
