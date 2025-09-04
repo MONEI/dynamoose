@@ -1018,20 +1018,20 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 								if (previousWasAttribute || previousWasIndex) {
 									expressionBuilder.push(".");
 								}
-								
+
 								// Create expression attribute name
 								const componentKey = `#a${currentIndex}`;
 								accumulator.ExpressionAttributeNames[componentKey] = segment.value as string;
 								expressionBuilder.push(componentKey);
 								currentIndex++;
-								
+
 								// Track state for next iteration
 								previousWasAttribute = true;
 								previousWasIndex = false;
 							} else if (segment.type === "index") {
 								// Array indices remain literal in the expression
 								expressionBuilder.push(`[${segment.value}]`);
-								
+
 								// Track state for next iteration
 								previousWasAttribute = false;
 								previousWasIndex = true;
