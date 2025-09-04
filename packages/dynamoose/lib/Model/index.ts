@@ -574,15 +574,16 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		}
 
 		const table = this.getInternalProperties(internalProperties).table();
-		const {instance} = table.getInternalProperties(internalProperties);
+		const tableInternalProperties = table.getInternalProperties(internalProperties);
+		const {instance} = tableInternalProperties;
 
 		const keyObjects = keys.map(async (key) => this.getInternalProperties(internalProperties).convertKeyToObject(key));
 
-		const readStrict = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options.readStrict;
+		const readStrict = tableInternalProperties.options.readStrict;
 		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "readStrict": readStrict});
 		const prepareResponse = async (response: DynamoDB.BatchGetItemOutput): Promise<ModelBatchGetItemsResponse<ItemCarrier>> => {
-			const tmpResult = await Promise.all(response.Responses[table.getInternalProperties(internalProperties).name].map((item) => itemify(item)));
-			const unprocessedArray = response.UnprocessedKeys[table.getInternalProperties(internalProperties).name] ? response.UnprocessedKeys[this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).name].Keys : [];
+			const tmpResult = await Promise.all(response.Responses[tableInternalProperties.name].map((item) => itemify(item)));
+			const unprocessedArray = response.UnprocessedKeys[tableInternalProperties.name] ? response.UnprocessedKeys[tableInternalProperties.name].Keys : [];
 			const tmpResultUnprocessed = await Promise.all(unprocessedArray.map((item) => this.Item.fromDynamo(item)));
 			const startArray: ModelBatchGetItemsResponse<ItemCarrier> = Object.assign([], {
 				"unprocessedKeys": [],
@@ -605,19 +606,20 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		};
 
 		const getParams = async (settings: ModelBatchGetSettings): Promise<DynamoDB.BatchGetItemInput> => {
+			const tableName = tableInternalProperties.name;
 			const params: DynamoDB.BatchGetItemInput = {
 				"RequestItems": {
-					[table.getInternalProperties(internalProperties).name]: {
+					[tableName]: {
 						"Keys": (await Promise.all(keyObjects)).map((key) => this.Item.objectToDynamo(key))
 					}
 				}
 			};
 
 			if (settings.consistent !== undefined && settings.consistent !== null) {
-				params.RequestItems[table.getInternalProperties(internalProperties).name].ConsistentRead = settings.consistent;
+				params.RequestItems[tableName].ConsistentRead = settings.consistent;
 			}
 			if (settings.attributes) {
-				params.RequestItems[table.getInternalProperties(internalProperties).name].AttributesToGet = settings.attributes;
+				params.RequestItems[tableName].AttributesToGet = settings.attributes;
 			}
 
 			return params;
@@ -850,11 +852,44 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			}
 
 			if (!updateObj) {
-				updateObj = utils.deep_copy(keyObj) as Partial<T>;
+				// Optimize: Use shallow copy for flat objects to avoid unnecessary deep copying
+				// Check if the object contains any nested objects that would require deep copying
+				let needsDeepCopy = false;
+
+				// Only perform optimization if keyObj is an object (not a primitive InputKey like string/number)
+				if (typeof keyObj === "object" && keyObj !== null) {
+					for (const key in keyObj) {
+						const value = keyObj[key];
+						if (value !== null && typeof value === "object") {
+							// Arrays and nested objects need deep copy
+							// Date, Buffer, and typed arrays are OK to shallow copy (immutable or copy-safe)
+							if (Array.isArray(value) ||
+							    (!(value instanceof Date) && !(value instanceof Buffer) && !ArrayBuffer.isView(value))) {
+								needsDeepCopy = true;
+								break;
+							}
+						}
+					}
+
+					if (needsDeepCopy) {
+						updateObj = utils.deep_copy(keyObj) as Partial<T>;
+					} else {
+						// Use Object.keys + for loop for best performance across all object sizes
+						updateObj = {} as Partial<T>;
+						const keys = Object.keys(keyObj);
+						for (let i = 0; i < keys.length; i++) {
+							const key = keys[i];
+							updateObj[key] = keyObj[key];
+						}
+					}
+				} else {
+					// For primitive InputKey types, use deep_copy as before
+					updateObj = utils.deep_copy(keyObj) as Partial<T>;
+				}
 
 				// Cache convertKeyToObject results for performance
-				// Create stable cache key by sorting object keys to avoid collisions
-				const keyObjString = JSON.stringify(keyObj, Object.keys(keyObj).sort());
+				// Use simpler cache key without expensive sorting
+				const keyObjString = JSON.stringify(keyObj);
 				let convertedKeyObj = this.getInternalProperties(internalProperties).convertKeyToObjectCache?.get(keyObjString);
 				if (!convertedKeyObj) {
 					convertedKeyObj = await this.getInternalProperties(internalProperties).convertKeyToObject(keyObj);
@@ -932,8 +967,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					}
 
 					// Cache expensive schema.getAttributeType() calls
-					// Use more robust cache key to avoid collisions (escape delimiter)
-					const attributeTypeKey = `${baseAttributeName.replace(/:/g, "\\:")}:${typeof subValue}`;
+					// Use pipe delimiter (|) which cannot appear in DynamoDB attribute names
+					const attributeTypeKey = `${baseAttributeName}|${typeof subValue}`;
 					let dynamoType = this.getInternalProperties(internalProperties).attributeTypeCache?.get(attributeTypeKey);
 					if (dynamoType === undefined) {
 						try {
@@ -1180,8 +1215,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				const value: ValueType = attributeValues[index];
 				const valueKey = attributeValueKeys[index];
 				// Cache expensive schema.getAttributeType() calls
-				// Use more robust cache key to avoid collisions (escape delimiter)
-				const attributeTypeKey = `${attribute.replace(/:/g, "\\:")}:${typeof value}`;
+				// Use pipe delimiter (|) which cannot appear in DynamoDB attribute names
+				const attributeTypeKey = `${attribute}|${typeof value}`;
 				let dynamoType = this.getInternalProperties(internalProperties).attributeTypeCache?.get(attributeTypeKey);
 				if (dynamoType === undefined) {
 					try {
