@@ -11,7 +11,9 @@ The benchmarks are designed to measure Dynamoose performance across different op
 
 ## Benchmark Scripts
 
-### Schema Conversion Benchmarks
+### DynamoDB Integration Benchmarks
+
+#### Schema Conversion Benchmarks
 - **File**: `schema-conversions-benchmark.js`
 - **Command**: `npm run benchmark:conversions`
 - **Tests**: 
@@ -19,16 +21,19 @@ The benchmarks are designed to measure Dynamoose performance across different op
   - `fromDynamo()` - Convert DynamoDB data to JavaScript objects  
   - `fromDynamo(strict)` - Convert with strict mode enabled
 
-### Model Operation Benchmarks  
+#### Model Operation Benchmarks  
 - **File**: `model-operations-benchmark.js`
 - **Command**: `npm run benchmark:models`
 - **Tests**:
   - `Model.update()` - Update existing items in DynamoDB
   - `Model.get()` - Retrieve items from DynamoDB
 
-### Run All Benchmarks
-- **Command**: `npm run benchmark`
-- **Description**: Runs both schema conversion and model operation benchmarks sequentially
+### Run Individual Benchmarks
+```bash
+# DynamoDB integration (requires local DynamoDB)
+npm run benchmark:conversions
+npm run benchmark:models
+```
 
 ## Schema Complexity Levels
 
@@ -324,7 +329,8 @@ benchmarks/
 ├── schemas.js                          # Schema definitions
 ├── schema-conversions-benchmark.js     # Conversion benchmarks  
 ├── model-operations-benchmark.js       # CRUD operation benchmarks
-└── performance-benchmark.js            # Legacy unified benchmark (deprecated)
+└── utils/
+    └── benchmark-runner.js             # Shared benchmark utilities
 ```
 
 ## Notes
