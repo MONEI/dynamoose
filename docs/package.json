@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@crowdin/cli": "^4.5.0",
-    "@docusaurus/core": "3.6.3",
+    "@docusaurus/core": "3.8.1",
     "@docusaurus/preset-classic": "3.6.3",
     "@docusaurus/remark-plugin-npm2yarn": "^3.6.3",
     "classnames": "^2.5.1",
