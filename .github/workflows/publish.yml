@@ -23,19 +23,28 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      contents: read
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: lts/*
           registry-url: https://registry.npmjs.org/
       - run: npm install
       - run: node publish/copy-readme.js
-      - run: lerna publish from-package --dist-tag $TAG --yes --no-git-tag-version --no-push --no-verify-access --no-git-reset
+      - run: git config user.name "github-actions[bot]"
+      - run: git config user.email "github-actions[bot]@users.noreply.github.com"
+      - run: git commit -am "Release commit" # lerna will fail if there are uncommitted changes; we won't actually push these changes, but we need to commit them
+        continue-on-error: true
+      - name: Publish packages with provenance
+        run: |
+          npm publish --workspace=packages/dynamoose-utils --tag $TAG --provenance --access public
+          npm publish --workspace=packages/dynamoose-logger --tag $TAG --provenance --access public
+          npm publish --workspace=packages/dynamoose --tag $TAG --provenance --access public
         env:
           TAG: ${{ needs.getinfo.outputs.npmtag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-  
+
   publishsite:
     needs: getinfo
     runs-on: ubuntu-latest
