@@ -123,7 +123,7 @@ function validateRemoveOperation(path: string, updateType: string): void {
 export type UpdatePartial<T> = Partial<T> & {
 	$SET?: Partial<T>;
 	$ADD?: Partial<T>;
-	$REMOVE?: Partial<T> | string[];
+	$REMOVE?: { [K in keyof T]?: null } | string[];
 	$DELETE?: Partial<T>;
 };
 
