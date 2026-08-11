@@ -1129,6 +1129,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			// Optimize combine type processing - avoid multiple array iterations
 			const expressionAttributeNamesMap = new Map(Object.entries(returnObject.ExpressionAttributeNames));
 			const setAndRemoveExpressions = [...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", ");
+			// Every attribute name referenced anywhere in the update, across all four expression groups.
+			// The key guard below has to see $ADD and $DELETE as well, otherwise a source can be written
+			// while the key combined from it stays behind.
+			const referencedExpressionKeys = new Set<string>(Object.values(returnObject.UpdateExpression).flat().join(", ").match(/#a\d+/g) ?? []);
 
 			// Single pass through schema attributes to find and process combine types
 			const combineAttributes = [];
@@ -1159,7 +1163,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				if (details.attribute === hashKeyName || details.attribute === rangeKeyName) {
 					const keySourcesBeingUpdated = details.type.typeSettings.attributes.filter((attr) => {
 						const expressionKey = [...expressionAttributeNamesMap].find(([key, value]) => value === attr)?.[0];
-						return expressionKey && setAndRemoveExpressions.includes(expressionKey);
+						return expressionKey && referencedExpressionKeys.has(expressionKey);
 					});
 
 					if (keySourcesBeingUpdated.length > 0) {

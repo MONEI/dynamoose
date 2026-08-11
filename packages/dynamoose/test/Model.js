@@ -4586,6 +4586,16 @@ describe("Model", () => {
 					return expect(callType.func(User).bind(User)({"entity": "ACCOUNT#1", "docId": "doc1"}, {"entityType": "IDENTITY", "entityId": "2", "data": "Charlie"})).rejects.toEqual(new CustomError.InvalidParameter("You cannot update the combine attributes of entity because it is part of the key. Remove them from the update: entityType, entityId."));
 				});
 
+				// $ADD and $DELETE write the source just as surely as $SET does. Missing them here would
+				// let the source drift away from the key combined from it, with no error raised.
+				it("Should throw error if updating the combine attributes of a key via $ADD", () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"entity": {"type": {"value": "Combine", "settings": {"attributes": ["major", "minor"]}}, "hashKey": true}, "docId": {"type": String, "rangeKey": true}, "major": Number, "minor": Number, "data": String});
+					new dynamoose.Table("User", [User]);
+
+					return expect(callType.func(User).bind(User)({"entity": "1-2", "docId": "doc1"}, {"$ADD": {"major": 1}})).rejects.toEqual(new CustomError.InvalidParameter("You cannot update the combine attributes of entity because it is part of the key. Remove them from the update: major."));
+				});
+
 				it("Shouldn't throw error if update with property allowing multiple types as first type", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data": [String, Number]});
