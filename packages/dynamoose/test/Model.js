@@ -4547,6 +4547,45 @@ describe("Model", () => {
 					return expect(callType.func(User).bind(User)({"id": 1}, {"data1": "Charlie"})).rejects.toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: data2."));
 				});
 
+				// A combine attribute that IS the key is a different case entirely. Requiring its sources
+				// and then deriving a SET from them makes every update on such a schema impossible:
+				// DynamoDB rejects any SET on a key attribute. The key is immutable and already supplied
+				// in `Key`, so the whole combine dance has to be skipped for it.
+				it("Shouldn't require combine attributes when the combine attribute is the hashKey", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"entity": {"type": {"value": "Combine", "settings": {"attributes": ["entityType", "entityId"]}}, "hashKey": true}, "docId": {"type": String, "rangeKey": true}, "entityType": String, "entityId": String, "data": String});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"entity": "ACCOUNT#1", "docId": "doc1"}, {"data": "Charlie"});
+
+					expect(updateItemParams).toBeInstanceOf(Object);
+					// The key attribute must NOT appear in the update expression — only `data` does.
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.Key).toEqual({"entity": {"S": "ACCOUNT#1"}, "docId": {"S": "doc1"}});
+				});
+
+				it("Shouldn't require combine attributes when the combine attribute is the rangeKey", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "entity": {"type": {"value": "Combine", "settings": {"attributes": ["entityType", "entityId"]}}, "rangeKey": true}, "entityType": String, "entityId": String, "data": String});
+					new dynamoose.Table("User", [User]);
+
+					await callType.func(User).bind(User)({"id": 1, "entity": "ACCOUNT#1"}, {"data": "Charlie"});
+
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+				});
+
+				// The sources of a key are immutable for the same reason the key is. Silently setting them
+				// would leave them describing a different entity than the key they were combined into.
+				it("Should throw error if updating the combine attributes of a key", () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"entity": {"type": {"value": "Combine", "settings": {"attributes": ["entityType", "entityId"]}}, "hashKey": true}, "docId": {"type": String, "rangeKey": true}, "entityType": String, "entityId": String, "data": String});
+					new dynamoose.Table("User", [User]);
+
+					return expect(callType.func(User).bind(User)({"entity": "ACCOUNT#1", "docId": "doc1"}, {"entityType": "IDENTITY", "entityId": "2", "data": "Charlie"})).rejects.toEqual(new CustomError.InvalidParameter("You cannot update the combine attributes of entity because it is part of the key. Remove them from the update: entityType, entityId."));
+				});
+
 				it("Shouldn't throw error if update with property allowing multiple types as first type", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data": [String, Number]});
