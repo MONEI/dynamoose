@@ -1129,6 +1129,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			// Optimize combine type processing - avoid multiple array iterations
 			const expressionAttributeNamesMap = new Map(Object.entries(returnObject.ExpressionAttributeNames));
 			const setAndRemoveExpressions = [...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", ");
+			// Every attribute name referenced anywhere in the update, across all four expression groups.
+			// The key guard below has to see $ADD and $DELETE as well, otherwise a source can be written
+			// while the key combined from it stays behind.
+			const referencedExpressionKeys = new Set<string>(Object.values(returnObject.UpdateExpression).flat().join(", ").match(/#a\d+/g) ?? []);
 
 			// Single pass through schema attributes to find and process combine types
 			const combineAttributes = [];
@@ -1144,8 +1148,31 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				}
 			}
 
+			const hashKeyName = this.getInternalProperties(internalProperties).getHashKey();
+			const rangeKeyName = this.getInternalProperties(internalProperties).getRangeKey();
+
 			// Process combine attributes efficiently
 			for (const details of combineAttributes) {
+				// A combine attribute that IS the primary key can never be updated: DynamoDB rejects any
+				// SET on a key attribute ("This attribute is part of the key"), and the key is already
+				// fully specified in `Key`. Applying the rules below to it makes every update on such a
+				// schema impossible — the all-or-none check demands the sources, and supplying them then
+				// forces the very SET DynamoDB refuses. The key's sources are immutable for the same
+				// reason, so updating them is rejected explicitly rather than silently desynced from the
+				// key it is derived from.
+				if (details.attribute === hashKeyName || details.attribute === rangeKeyName) {
+					const keySourcesBeingUpdated = details.type.typeSettings.attributes.filter((attr) => {
+						const expressionKey = [...expressionAttributeNamesMap].find(([key, value]) => value === attr)?.[0];
+						return expressionKey && referencedExpressionKeys.has(expressionKey);
+					});
+
+					if (keySourcesBeingUpdated.length > 0) {
+						throw new CustomError.InvalidParameter(`You cannot update the combine attributes of ${details.attribute} because it is part of the key. Remove them from the update: ${keySourcesBeingUpdated.join(", ")}.`);
+					}
+
+					continue;
+				}
+
 				const invalidAttributes = [];
 
 				// Check validity of all combine attributes
