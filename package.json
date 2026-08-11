@@ -1,5 +1,6 @@
 {
-  "name": "@monei-js/dynamoose",
+  "name": "dynamoose",
+  "private": true,
   "description": "Dynamoose is a modeling tool for Amazon's DynamoDB (inspired by Mongoose)",
   "homepage": "https://dynamoosejs.com",
   "workspaces": [

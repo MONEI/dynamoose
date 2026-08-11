@@ -18,6 +18,7 @@
     "url": "https://charlie.fish"
   },
   "scripts": {
+    "prepack": "npm run build",
     "build": "tsc",
     "build:sourcemap": "tsc --sourceMap",
     "build:clean": "rimraf dist",
