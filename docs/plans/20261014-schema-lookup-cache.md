@@ -151,17 +151,24 @@ Benchmark (`packages/dynamoose/benchmarks/benchmark.js`):
 - Delete: `packages/dynamoose/benchmarks/model-operations-benchmark.js`
 - Modify: `packages/dynamoose/benchmarks/README.md`
 - Modify: `packages/dynamoose/package.json` (`benchmark` script, `dynamoose-baseline` devDependency)
+- ➕ Modify: `packages/dynamoose/benchmarks/schemas.js` (each factory takes the dynamoose build)
+- ➕ Create: `packages/dynamoose/jest.benchmark.config.js` (`npm run benchmark:smoke`)
+- ➕ Delete: `packages/dynamoose/benchmarks/utils/benchmark-runner.js` (used only by the deleted scripts)
+- ➕ Modify: `CLAUDE.md` (the removed `benchmark:*` scripts)
 
-- [ ] add `"dynamoose-baseline": "npm:@monei-js/dynamoose@4.2.4"` to devDependencies
-- [ ] write `benchmark.js`: stub DynamoDB client with canned responses; operations create (`save()` and
+- [x] add `"dynamoose-baseline": "npm:@monei-js/dynamoose@4.2.4"` to devDependencies
+- [x] write `benchmark.js`: stub DynamoDB client with canned responses; operations create (`save()` and
   `save({return: "request"})`), read (`get` through the stub), top-level update, nested-path update; every
   async call awaited
-- [ ] load the current `dist` and `dynamoose-baseline` in one process, interleave A/B rounds, `--expose-gc`
+- [x] load the current `dist` and `dynamoose-baseline` in one process, interleave A/B rounds, `--expose-gc`
   with `gc()` between rounds; print median ops/s and the change per operation and schema, plus JSON output
-- [ ] move the test data generators from the deleted scripts into the new benchmark
-- [ ] `--quick` mode (few iterations); `smoke.test.js` runs it (jest config for benchmarks, outside
+- [x] move the test data generators from the deleted scripts into the new benchmark
+- [x] `--quick` mode (few iterations); `smoke.test.js` runs it (jest config for benchmarks, outside
   `test/`) and checks that every operation reports a number for both builds
-- [ ] `npm run build`, smoke test, unit suite, lint - must pass before next task
+- [x] `npm run build`, smoke test, unit suite, lint - must pass before next task
+- ⚠️ installing `dynamoose-baseline` hoisted the AWS SDK to the root `node_modules` and moved it from
+  3.782.0 to 3.1151.0 (the version range `^3.782.0` is unchanged). Both builds now load the same SDK in
+  one process. The unit suite passes on it.
 
 ### Task 2: Profile mode that names the bottlenecks
 

@@ -42,9 +42,7 @@ cd packages/dynamoose && npm run build && npm run test:integration   # DYNAMODB_
 
 **Benchmarking (in packages/dynamoose):**
 ```bash
-npm run benchmark               # Run all benchmarks
-npm run benchmark:conversions   # Schema conversions benchmark
-npm run benchmark:models        # Model operations benchmark
+npm run benchmark               # Current dist vs dynamoose-baseline (see benchmarks/README.md)
 ```
 
 **Linting:**

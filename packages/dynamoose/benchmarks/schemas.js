@@ -1,7 +1,5 @@
-const dynamoose = require("../dist");
-
 // Small schema for baseline comparison
-const createSmallSchema = () =>
+const createSmallSchema = (dynamoose) =>
 	new dynamoose.Schema({
 		"id": {
 			"type": String,
@@ -14,7 +12,7 @@ const createSmallSchema = () =>
 	});
 
 // Medium schema with moderate complexity
-const createMediumSchema = () =>
+const createMediumSchema = (dynamoose) =>
 	new dynamoose.Schema({
 		"id": {
 			"type": String,
@@ -70,7 +68,7 @@ const createMediumSchema = () =>
 	});
 
 // Large schema with high complexity
-const createLargeSchema = () =>
+const createLargeSchema = (dynamoose) =>
 	new dynamoose.Schema({
 		"id": {
 			"type": String,
@@ -503,7 +501,7 @@ const createLargeSchema = () =>
 	});
 
 // Extra large schema with maximum complexity
-const createExtraLargeSchema = () =>
+const createExtraLargeSchema = (dynamoose) =>
 	new dynamoose.Schema({
 		"id": {
 			"type": String,
