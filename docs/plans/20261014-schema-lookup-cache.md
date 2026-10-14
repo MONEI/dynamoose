@@ -530,11 +530,60 @@ https://github.com/MONEI/dynamoose/actions/runs/38586274645/job/115929008243: fa
 - Create: `packages/dynamoose/test/AttributeTypeCache.js` (only if the bug is confirmed; marked `it.skip`
   with a reason, so the suite stays green)
 
-- [ ] `Model/index.ts` caches the DynamoDB type per `${attribute}|${typeof value}` (around lines 990 and
+- [x] `Model/index.ts` caches the DynamoDB type per `${attribute}|${typeof value}` (around lines 990 and
   1296). For a `saveUnknown` attribute, `getAttributeType` depends on the value: an update that writes a Set
   followed by one that writes an array may convert the array into a Set. Write a test that checks this on
   the current build and on `upstream/main`
-- [ ] record the result in this plan; no fix here (a fix changes behaviour and needs the user's decision)
+- [x] record the result in this plan; no fix here (a fix changes behaviour and needs the user's decision)
+
+**Result: confirmed.** The cache makes `Model.update` requests depend on earlier updates on the same model, for
+top-level attributes the schema does not declare (`saveUnknown: true` or a top-level pattern). Published 4.2.4
+gives the same results as the current fork (the cache came in `d5421eee`). `test/AttributeTypeCache.js` pins
+two cases with `it.skip`; with the skip removed both fail on the fork and pass on `upstream/main` (`12d22a37`).
+
+Why: `getAttributeType` reads the schema for a declared attribute and ignores the value, so the cache is exact
+there. For an undeclared attribute it throws, and the `unknownAttributeAllowed` fallback derives the type from
+the value (`Item.objectToDynamo`). A Set, an array and an object all have `typeof` `"object"`, so they share
+one cache entry. The cached type acts in two places: the per-key loop wraps a non-array value in `[value]`
+when the type is `L`, and the final pass converts with the cached type's `toDynamo` (an array becomes a Set
+when the type is `SS`/`NS`).
+
+Probe: schema `{id: String}`, `saveUnknown: true`, `{return: "request"}`, stub client. "cached" = second
+update on the same model after the first; "fresh" = the second update alone on a new model.
+
+| first update → second update | fork, cached | fork, fresh | upstream, cached and fresh | cache changes the request |
+| --- | --- | --- | --- | --- |
+| `tags: Set(["a"])` → `tags: ["a","b"]` | `SS ["a","b"]` | `L [S a, S b]` | `L [S a, S b]` | yes |
+| `tags: ["a","b"]` → `tags: Set(["a"])` | `L [SS ["a"]]` | `SS ["a"]` | `SS ["a"]` | yes |
+| `nums: Set([1])` → `nums: [1,2]` | `NS ["1","2"]` | `L [N 1, N 2]` | `L [N 1, N 2]` | yes |
+| `nums: [1,2]` → `nums: Set([1])` | `L [NS ["1"]]` | `NS ["1"]` | `NS ["1"]` | yes |
+| `obj: {a: 1}` → `obj: ["a","b"]` | `L [S a, S b]` | same | same | no |
+| `obj: ["a","b"]` → `obj: {a: 1}` | `L [M {a: N 1}]` | `M {a: N 1}` | `M {a: N 1}` | yes |
+| `$SET` Set → `$SET` array | `SS ["a","b"]` | `L [S a, S b]` | `L [S a, S b]` | yes |
+| declared `data: Object`, `saveUnknown: ["data.**"]`: `data: {tags: Set}` → `data: {tags: [..]}`, both orders | value's own type | same | same | no |
+| same schema, path `"data.tags"`: Set → array, both orders | value's own type | same | same | no |
+
+The first update is the same on all three builds in every case. Only the second update differs.
+
+**@monei/common cannot hit it.** `toDynamooseSchema` and `toSchema` (`src/zod/converter.ts`) declare every
+field, the `z.record`/`z.any`/`z.custom` fields too, and set `saveUnknown` only to `<field>.**` (root) or
+`<parent>.**` (second level). So every top-level name that reaches the cache is declared, and its type comes
+from the schema. A nested unknown key goes through the cache under its declared top-level name
+(`baseAttributeName` = `data`), so it gets the declared `M`. The nested value is converted by
+`convertNestedValue` and marked already converted, so the final pass skips it. An undeclared top-level name is
+dropped (no value in the request). Checked with a schema in the converter's shape (`data` record at root,
+`meta.inner` record at level 1, `saveUnknown: ["data.**", "meta.**"]`): cached and fresh requests are the
+same for `data: {k: Set}` → `data: {k: [..]}`, the paths `data.k` and `meta.inner.k` (both orders), the
+unknown path `meta.x`, and an undeclared top-level name. A service that builds a dynamoose Schema itself
+with top-level `saveUnknown` can hit it; common's own models cannot.
+
+Suggested fix (needs the user's decision): store a type only when the schema declares the attribute, so the
+value-derived fallback is never cached. The simplest form drops `attributeTypeCache` and calls
+`schema.getAttributeType` every time, as upstream does; the Task 5 lookup cache now makes the declared case
+cheap (to be confirmed with the benchmark). `clearCache()` keeps working. Behaviour impact: requests for
+declared attributes do not change. For undeclared top-level attributes under `saveUnknown`, the second and
+later updates on a model change to what the first update on a fresh model, and upstream, already write.
+That differs from 4.2.4 only where 4.2.4 depends on call order.
 
 ### Task 9: Verify acceptance criteria
 
