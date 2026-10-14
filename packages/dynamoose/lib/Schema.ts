@@ -1652,9 +1652,11 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 };
 
 Schema.prototype.getAttributeValue = function (this: Schema, key: string, settings?: {standardKey?: boolean; typeIndexOptionMap?: {}}): AttributeDefinition {
-	const standardKey = standardizeKey(key, settings);
-	const cache = getLookupCache(this);
-	const cached = cache.values.get(standardKey);
+	// A non-string key is never cached. 4.2.4 throws a TypeError for most such keys, and V8 builds its
+	// message from the source expression that failed, so the split below keeps the 4.2.4 expression.
+	const cache = typeof key === "string" ? getLookupCache(this) : undefined;
+	const standardKey = cache ? standardizeKey(key, settings) : undefined;
+	const cached = cache?.values.get(standardKey);
 	if (cached !== undefined) {
 		return cached;
 	}
@@ -1665,7 +1667,8 @@ Schema.prototype.getAttributeValue = function (this: Schema, key: string, settin
 	// from saveUnknown input, and the cache holds only the schema's own attributes.
 	let isOwnPath = true;
 	const previousKeyParts = [];
-	let result = standardKey.split(".").reduce((result, part) => {
+	const keyParts: string[] = cache ? standardKey.split(".") : (settings?.standardKey ? key : key.replace(/\.\d+/gu, ".0")).split(".");
+	let result = keyParts.reduce((result, part) => {
 		if (Array.isArray(result)) {
 			reachedDefinitionArray = true;
 			const predefinedIndex = settings && settings.typeIndexOptionMap && settings.typeIndexOptionMap[previousKeyParts.join(".")];
@@ -1691,7 +1694,7 @@ Schema.prototype.getAttributeValue = function (this: Schema, key: string, settin
 		}
 	}
 
-	if (isOwnPath && result !== undefined && !reachedDefinitionArray) {
+	if (cache && isOwnPath && result !== undefined && !reachedDefinitionArray) {
 		cache.values.set(standardKey, result);
 	}
 	return result;

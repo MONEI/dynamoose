@@ -776,6 +776,21 @@ const edgeCases = [
 		}
 	},
 	{
+		// A non-string key throws a TypeError whose message V8 builds from the source expression that
+		// failed, so the lookup must fail in an expression of the same shape as in the baseline.
+		"name": "Schema lookups with a non-string key",
+		"failing": ["5", "[\"a\"]", "{}"].flatMap((key) => [true, false].flatMap((standardKey) => [`value of ${key} with standardKey ${standardKey}`, `type details of ${key} with standardKey ${standardKey}`])),
+		"run": async (ctx) => {
+			const schema = new ctx.dynamoose.Schema({"id": String, "a": {"type": Object, "schema": {"b": String}}});
+			for (const key of [5, ["a"], {}]) {
+				for (const standardKey of [true, false]) {
+					await ctx.step(`value of ${JSON.stringify(key)} with standardKey ${standardKey}`, () => schema.getAttributeValue(key, {standardKey}));
+					await ctx.step(`type details of ${JSON.stringify(key)} with standardKey ${standardKey}`, () => schema.getAttributeTypeDetails(key, {standardKey}));
+				}
+			}
+		}
+	},
+	{
 		// getAttributeTypeDetails writes the schema into the definition's own THIS settings object on every
 		// lookup. With one definition in two schemas, each lookup must write its own schema again.
 		"name": "THIS definition shared by two schemas",
