@@ -290,7 +290,7 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 					}
 				};
 			});
-			// The only write to a schema after its constructor: the lookups cached until now lack the ttl attribute.
+			// A write into a built schema: the lookups cached until now lack the ttl attribute.
 			clearSchemaLookupCaches();
 		}
 

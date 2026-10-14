@@ -163,6 +163,77 @@ describe("Schema lookup cache", () => {
 		});
 	});
 
+	// getAttributeTypeDetails writes the schema into the definition's THIS settings object on each lookup.
+	// A result kept from one schema would read the other schema's hash key after the other's lookup.
+	it("Should give each schema its own model for a THIS definition the schemas share", async () => {
+		const definition = {"type": {"value": dynamoose.type.THIS, "settings": {}}};
+		const A = model("CacheThisA", new dynamoose.Schema({"id": String, "ref": definition}));
+		const B = model("CacheThisB", new dynamoose.Schema({"pk": Number, "ref": definition}));
+		const requests = [
+			await B.create({"pk": 1, "ref": 2}, {"return": "request"}),
+			await A.create({"id": "1", "ref": "2"}, {"return": "request"}),
+			await B.create({"pk": 3, "ref": 4}, {"return": "request"})
+		];
+		expect(requests.map((request) => request.Item.ref)).toEqual([{"N": "2"}, {"S": "2"}, {"N": "4"}]);
+	});
+
+	// A spy or a plugin that replaces a public lookup method must see every call dynamoose makes through
+	// it, also for a schema whose lookups the constructor already ran.
+	describe("Replaced lookup methods", () => {
+		const replace = (method) => {
+			const original = dynamoose.Schema.prototype[method];
+			const spy = jest.fn(function (...args) {
+				return original.apply(this, args);
+			});
+			dynamoose.Schema.prototype[method] = spy;
+			return {spy, "restore": () => {
+				dynamoose.Schema.prototype[method] = original;
+			}};
+		};
+
+		// The getAttributeValue and getAttributeSettingValue terms of the guard are checked by the corpus case
+		// "replaced Schema lookup methods": a skipped call there shows only against 4.2.4.
+		it("Should call a replaced getAttributeTypeDetails on every save", async () => {
+			const Cat = model("CacheSpyTypeDetails", {"id": String, "name": String, "tags": {"type": Set, "schema": [String]}});
+			await Cat.create({"id": "0", "name": "a", "tags": ["a"]}, {"return": "request"});
+			const {spy, restore} = replace("getAttributeTypeDetails");
+			try {
+				await Cat.create({"id": "1", "name": "a", "tags": ["a"]}, {"return": "request"});
+				const first = spy.mock.calls.length;
+				await Cat.create({"id": "2", "name": "b", "tags": ["b"]}, {"return": "request"});
+				expect(first).toBeGreaterThan(0);
+				expect(spy.mock.calls.length).toEqual(2 * first);
+			} finally {
+				restore();
+			}
+		});
+
+		it("Should call a replaced getAttributeType on every attributes() call", () => {
+			const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": {"city": String}}});
+			const {spy, restore} = replace("getAttributeType");
+			try {
+				schema.attributes();
+				schema.attributes();
+				expect(spy.mock.calls.map((call) => call[0])).toEqual(["id", "address", "address.city", "id", "address", "address.city"]);
+			} finally {
+				restore();
+			}
+		});
+	});
+
+	// The Schema constructor writes the timestamp attributes into the caller's definition object, which a
+	// schema built earlier can hold as a nested schema.
+	it("Should see the timestamp attributes a later constructor writes into a nested definition", async () => {
+		const nested = {"street": String};
+		const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": nested}});
+		expect(schema.attributes()).toEqual(["id", "address", "address.street"]);
+		new dynamoose.Schema(nested, {"timestamps": true});
+
+		expect(schema.attributes()).toEqual(["id", "address", "address.street", "address.createdAt", "address.updatedAt"]);
+		const request = await model("CacheTimestampsNested", schema).create({"id": "1", "address": {"street": "s", "createdAt": new Date(0)}}, {"return": "request"});
+		expect(request.Item.address).toEqual({"M": {"street": {"S": "s"}, "createdAt": {"N": "0"}}});
+	});
+
 	// Accepted, documented difference from 4.2.4 (PENDING_CHANGELOG.md, CLAUDE.md): the constructor copies
 	// only the top level of the definition, so nested definition objects stay shared with the caller. 4.2.4
 	// sees a nested definition the caller adds or replaces after the constructor; the cache does not.

@@ -834,10 +834,11 @@ interface SchemaLookupCache {
 	typeDetails: Map<string, AttributeTypeDetails>;
 	attributes?: string[];
 }
-// Counts the calls getAttributeSettingValue makes to a function-valued setting (for example a Set's
-// `schema`). attributes() and the shared type details are cached only when computing them made no such
-// call, so the function keeps being called on every lookup.
-let settingFunctionCalls = 0;
+// Counts lookup steps with an effect that a cache hit would skip: a call to a function-valued setting
+// (for example a Set's `schema`), and a type lookup that wrote `typeSettings.model` (THIS and Model
+// types) or threw (it may have made that write first). attributes() and the shared type details are
+// cached only when computing them added nothing here, so these effects happen on every lookup.
+let lookupSideEffects = 0;
 
 interface SchemaInternalProperties {
 	schemaObject: SchemaDefinition;
@@ -1096,6 +1097,9 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 				}
 			}
 		});
+		// The writes above (timestamps into `object`, nested Schema instances and models below it) change
+		// the caller's definition objects, which a schema built earlier can share.
+		clearSchemaLookupCaches();
 
 		const mapSettingNames = [
 			"map",
@@ -1429,7 +1433,7 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 		function func (attributeValue): any {
 			const defaultPropertyValue = (attributeValue || {})[setting];
 			if (typeof defaultPropertyValue === "function" && !settings.returnFunction) {
-				settingFunctionCalls++;
+				lookupSideEffects++;
 				return defaultPropertyValue();
 			}
 			return defaultPropertyValue;
@@ -1615,7 +1619,7 @@ function getLookupCache (schema: Schema): SchemaLookupCache {
 }
 
 Schema.prototype.attributes = function (this: Schema, object?: ObjectType, settings?: SchemaAttributesMethodSettings): string[] {
-	const isCacheable = object === undefined && settings === undefined;
+	const isCacheable = object === undefined && settings === undefined && this.getAttributeType === builtinGetAttributeType && usesBuiltinLookups(this);
 	const cache = isCacheable ? getLookupCache(this) : undefined;
 	// attributes() returns a new array on every call, so the cached array is never handed out.
 	if (cache?.attributes) {
@@ -1659,9 +1663,9 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 		}, []);
 	};
 
-	const callsBefore = settingFunctionCalls;
+	const sideEffectsBefore = lookupSideEffects;
 	const result = main(this.getInternalProperties(internalProperties).schemaObject);
-	if (cache && settingFunctionCalls === callsBefore) {
+	if (cache && lookupSideEffects === sideEffectsBefore) {
 		cache.attributes = [...result];
 	}
 	return result;
@@ -1803,23 +1807,54 @@ Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, 
 	const returnObject = result.length < 2 ? result[0] : result;
 	return returnObject;
 };
+const builtinGetAttributeType = Schema.prototype.getAttributeType;
+const builtinGetAttributeValue = Schema.prototype.getAttributeValue;
+const builtinGetAttributeSettingValue = Schema.prototype.getAttributeSettingValue;
+const builtinGetAttributeTypeDetails = Schema.prototype.getAttributeTypeDetails;
+// A cache hit skips the calls a lookup makes through these public methods. When user code replaces one
+// of them (a spy, a plugin, a subclass), every lookup calls it, as without the cache.
+function usesBuiltinLookups (schema: Schema): boolean {
+	return schema.getAttributeTypeDetails === builtinGetAttributeTypeDetails && schema.getAttributeValue === builtinGetAttributeValue && schema.getAttributeSettingValue === builtinGetAttributeSettingValue;
+}
+// getAttributeTypeDetails writes `typeSettings.model` for THIS and Model types. The settings object can
+// belong to the definition, which other schemas can share, so such a result is built again on each lookup.
+function hasModelSetting (details: AttributeTypeDetails): boolean {
+	return (Array.isArray(details) ? details : [details]).some((detail: DynamoDBTypeResult | DynamoDBSetTypeResult) => {
+		const typeSettings = detail?.typeSettings;
+		return (typeof typeSettings === "object" || typeof typeSettings === "function") && typeSettings !== null && "model" in typeSettings;
+	});
+}
 /**
  * getAttributeTypeDetails for dynamoose's own callers in lib/, which only read the result: they share one
- * result per path. Other callers use the public method, which builds a new result per call.
+ * result per path. Other callers use the public method, which builds a new result per call. The arguments
+ * are passed on as given, so a replaced method gets the same arguments as without the cache.
  * @internal
  */
-export function getSharedAttributeTypeDetails (schema: Schema, key: string, settings: {standardKey?: boolean; typeIndexOptionMap?: {}} = {}): AttributeTypeDetails {
+export function getSharedAttributeTypeDetails (schema: Schema, ...args: [key: string, settings?: {standardKey?: boolean; typeIndexOptionMap?: {}}]): AttributeTypeDetails {
+	if (!usesBuiltinLookups(schema)) {
+		return schema.getAttributeTypeDetails(...args);
+	}
+	const [key, settings = {}] = args;
 	const standardKey = settings.standardKey ? key : key.replace(/\.\d+/gu, ".0");
 	const cache = getLookupCache(schema);
 	const cached = cache.typeDetails.get(standardKey);
 	if (cached !== undefined) {
 		return cached;
 	}
-	const callsBefore = settingFunctionCalls;
-	const result = schema.getAttributeTypeDetails(key, settings);
-	// Stored only when the attribute value is cached (so no typeIndexOptionMap played a part) and no
-	// function-valued setting was called (a Set's schema function is called on every lookup).
-	if (settingFunctionCalls === callsBefore && cache.values.has(standardKey) && getLookupCache(schema) === cache) {
+	const sideEffectsBefore = lookupSideEffects;
+	let result: AttributeTypeDetails;
+	try {
+		result = schema.getAttributeTypeDetails(...args);
+	} catch (error) {
+		lookupSideEffects++;
+		throw error;
+	}
+	if (hasModelSetting(result)) {
+		lookupSideEffects++;
+	}
+	// Stored only when the attribute value is cached (so no typeIndexOptionMap played a part) and the
+	// lookup had no side effect.
+	if (lookupSideEffects === sideEffectsBefore && cache.values.has(standardKey) && getLookupCache(schema) === cache) {
 		cache.typeDetails.set(standardKey, result);
 	}
 	return result;

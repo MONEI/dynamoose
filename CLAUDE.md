@@ -170,17 +170,22 @@ The Schema system supports:
   call builds a new result, as 4.2.4 does, so a caller can change it without changing the next result.
   Code in `lib/` calls `getSharedAttributeTypeDetails` instead, which shares one cached result per path:
   it must only read that result, never write into it.
-  - The only write to a schema after its constructor is the `ttl` attribute in `lib/Table/index.ts`. It
-    calls `clearSchemaLookupCaches()`, which drops the cache of every schema (nested schemas share objects).
-    A new post-construction write must call it too.
+  - Writes by `lib/` that can reach a schema built earlier call `clearSchemaLookupCaches()`, which drops
+    the cache of every schema (nested schemas share objects): the `ttl` attribute in `lib/Table/index.ts`,
+    and the Schema constructor, which writes into the caller's definition objects (timestamp attributes,
+    nested Schema instances and models). A new such write must call it too.
   - Misses, thrown errors, keys only inherited from a prototype (`constructor`, `__proto__`) and paths
     through an array of attribute definitions (they depend on the `typeIndexOptionMap`) are never cached,
     so `saveUnknown` input cannot grow the cache.
   - Cached attribute definitions are the schema's own objects, not copies. `attributes()` returns a new
     copy per call.
   - `attributes()` and the shared type details are not cached when computing them called a
-    function-valued setting (a Set's `schema` function): that function is called on every lookup, as in
-    4.2.4.
+    function-valued setting (a Set's `schema` function), or ran a type lookup that wrote
+    `typeSettings.model` (THIS and Model types) or threw: the function call and the write happen on every
+    lookup, as in 4.2.4. The settings object can belong to a definition that several schemas share.
+  - The cache is used only while `getAttributeTypeDetails`, `getAttributeValue`, `getAttributeSettingValue`
+    (and `getAttributeType` for `attributes()`) are the built-in methods. When user code replaces one (a
+    spy, a plugin, a subclass), every lookup calls it with the same arguments, as in 4.2.4.
   - Accepted difference from 4.2.4: the constructor copies only the top level of the definition, so every
     object below it (each attribute's definition object, each nested `schema`) stays the caller's. A
     nested definition that the caller adds, removes or replaces after the constructor is not seen by

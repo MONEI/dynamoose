@@ -320,8 +320,11 @@ The create gap to upstream is the `save` conform pass (Context); update and get 
   is cached, with the same array-of-definitions flag; `attributes()` without arguments caches a copy and
   returns a new copy on every call, because callers have always received a new array.
 - ⚠️ a caller that changes an attribute definition object after the Schema constructor (the constructor copies
-  the top level only, nested objects are the caller's) is not seen by the cache. `lib/` never does this.
-  The user accepted this difference; Task 11 documents and pins it.
+  the top level only, nested objects are the caller's) is not seen by the cache. The user accepted this
+  difference; Task 11 documents and pins it.
+- ⚠️ (review, Task 11) "`lib/` never does this" and "the only write is the `ttl` attribute" were wrong: the
+  Schema constructor writes into the caller's definition objects, which a schema built earlier can share.
+  See Task 11 for the full list of writes.
 - ⚠️ (review, Task 11) two cache rules above changed behaviour and are replaced in Task 11: the shared
   `getAttributeTypeDetails` result, and the skipped calls to a function-valued Set `schema` (the Set branch
   calls it on every lookup in 4.2.4; "not supported" was wrong).
@@ -707,10 +710,49 @@ design; keep the lockfile; leave the Task 8 bug unfixed.
 - ⚠️ a fully uncached `getAttributeTypeDetails` (no shared result in `lib/`) cost 10% to 23% on the gated
   rows against the first cache version (gate run, plain node, load about 8). With the shared result for
   `lib/`, the gated rows match the first cache version within noise (-1.4% to +3.0%, no p below 0.08)
-- ⚠️ code that replaces `Schema.prototype.getAttributeTypeDetails` no longer intercepts the lookups `lib/`
-  makes; only direct calls reach it
-- ⚠️ the type details `lib/` shares are computed once per path, so a `dynamoose.type.THIS` attribute with
-  its own `settings` object gets its `settings.model` written once, not on every lookup (an equal value)
+- [x] (critical re-check) a replaced lookup method sees every call again: the cache is used only while
+  `getAttributeTypeDetails`, `getAttributeValue` and `getAttributeSettingValue` (and `getAttributeType` for
+  `attributes()`) are the built-in methods; otherwise each lookup calls the replacement with the arguments
+  the caller gave (4.2.4 arity: one argument from `Item`, `Model`, `Populate`, `getAttributeType`, two from
+  `getValueTypeCheckResult`). The earlier note "no longer intercepts" is withdrawn
+- [x] (critical re-check) THIS and Model types: `getAttributeTypeDetails` writes `typeSettings.model` on
+  every lookup, into the definition's own settings object when it has one. One definition in two schemas
+  made a cached result read the other schema's model (repro: `{"type": {"value": THIS, "settings": {}}}`
+  in A `id: String` and B `pk: Number`, creates B, A, B: 4.2.4 writes `ref: {S: "2"}` for A, the cache
+  rejected A). The earlier note "an equal value" is withdrawn. A type lookup whose result has a `model`
+  setting, or that throws (it may have written first), is never cached, and the `attributes()` it ran in
+  is not cached either
+- [x] (critical re-check) the Schema constructor calls `clearSchemaLookupCaches()` after its writes into the
+  caller's definition objects (repro: `new Schema(def, {"timestamps": true})` after a schema that nests
+  `def`: 4.2.4 lists `address.createdAt` and saves it, the cache did not and rejected the save). Placed
+  before the constructor's validation, so a constructor that throws still clears
+- [x] (critical re-check) corpus cases: THIS definition shared by two schemas; THIS Set definition shared,
+  one lookup throws; replaced Schema lookup methods (each of the four replaced in turn, calls logged with
+  their arguments); timestamps schema built on a nested definition of an earlier schema. All four pass
+  against 4.2.4 and fail against commit 60ab5ffe (built in a scratch worktree, then removed).
+  `test/SchemaCache.js`: shared THIS definition, replaced `getAttributeTypeDetails` and `getAttributeType`,
+  timestamps on a nested definition. Mutation checks: each guard term, the `model` check, the throw count
+  and the constructor clear each turn at least one test red
+- writes by `lib/` into definition objects, settings objects or `schemaObject` (full search of `lib/`:
+  member and index assignments, `utils.object.set`, `delete`, `Object.assign`, `push`/`splice` on schema
+  data):
+  1. `Schema` constructor, `object[prop.name] = prop.value` (timestamps): the caller's top-level object,
+     which an earlier schema can nest. Cleared by the constructor
+  2. `Schema` constructor, `utils.object.set(parsedObject, key, ...)` for nested Schema instances and
+     models: with a dotted key (`a.schema`, `list.0`, `a.schema.b`) it writes into the caller's nested
+     objects and arrays. Cleared by the constructor
+  3. `Schema` constructor, `settings.timestamps = {...}` when `timestamps` is `true`: the caller's settings
+     object. No cached lookup reads settings; no clear needed
+  4. `getAttributeTypeDetails`, `typeSettings.model = ...` (THIS and Model types): the definition's settings
+     object or a fresh one. Such results are never cached (above)
+  5. `Table` constructor, the `ttl` attribute into `schemaObject` (`Table/index.ts:280`). Cleared there
+  - not schema data: `type.COMBINE` writes into the settings object it creates; `Model` writes only its own
+    internal caches (`clearCache` is unchanged and does not clear the schema cache); `Item`, `Populate`
+    and `returnModel` write into items and result objects
+- ⚠️ `getInternalProperties` is still called a different number of times than in 4.2.4. It takes the
+  internal symbol, so user code cannot replace it in a working way; not guarded
+- ⚠️ a getter on a nested definition object runs on the first lookup only (part of the accepted
+  difference: the cache reads a nested definition once)
 - validation: `npm run build`; `npm test` 36 suites, 2626 passed, 18 skipped; `npm run test:types`;
   `npm run benchmark:smoke` 13 passed; `npm run test:integration` 26 passed (own `dynamoose-it` container
   on 8100, stopped); root `npm run lint` clean
@@ -734,6 +776,26 @@ at start, 4.5 at end)**
 Every operation on every schema is faster (smallest: checkout create +48.6%). Stages: the public
 `getAttributeTypeDetails` +12.8% to +60.8% (was +776% cached); checkout `getTypePaths` -3.3% (not covered by
 the cache, noise level); all other stages faster.
+
+**Numbers after the critical re-check fixes (run D: 2026-10-14, node v24.22.0, plain node, full run, load
+average 5.7 at start, 4.5 at end)**
+
+| schema      | operation      | baseline | current |  change |
+| ----------- | -------------- | -------: | ------: | ------: |
+| large       | create         |    130.7 |   296.8 | +127.0% |
+| large       | create-request |    129.8 |   312.5 | +140.8% |
+| large       | get            |    271.8 |   667.6 | +145.6% |
+| large       | update         |    156.9 |   381.2 | +143.0% |
+| extra-large | create         |     74.8 |   164.3 | +119.8% |
+| extra-large | get            |    153.9 |   366.5 | +138.1% |
+| extra-large | update         |     91.9 |   219.8 | +139.1% |
+| checkout    | create         |    144.4 |   215.9 |  +49.5% |
+| checkout    | get            |    317.8 |   559.6 |  +76.1% |
+| checkout    | update         |     98.0 |   237.6 | +142.6% |
+
+Same as run C within noise: the guard and the `model` check cost nothing measurable, and no benchmark
+schema has a THIS or Model attribute. Every operation on every schema is faster (smallest: checkout create
++49.5%); checkout `getTypePaths` stage -4.8% (not covered by the cache, noise level).
 
 ## Post-Completion
 

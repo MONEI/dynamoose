@@ -774,6 +774,94 @@ const edgeCases = [
 			await ctx.step("type details of ttl after the ttl write", () => schema.getAttributeTypeDetails("ttl"));
 			await ctx.step("type of ttl after the ttl write", () => schema.getAttributeType("ttl"));
 		}
+	},
+	{
+		// getAttributeTypeDetails writes the schema into the definition's own THIS settings object on every
+		// lookup. With one definition in two schemas, each lookup must write its own schema again.
+		"name": "THIS definition shared by two schemas",
+		"run": async (ctx) => {
+			const definition = {"type": {"value": ctx.dynamoose.type.THIS, "settings": {}}};
+			const A = ctx.model("A", new ctx.dynamoose.Schema({"id": String, "ref": definition}));
+			const B = ctx.model("B", new ctx.dynamoose.Schema({"pk": Number, "ref": definition}));
+			ctx.track("definition", definition);
+			await ctx.step("create b", () => B.create(ctx.track("create b input", {"pk": 1, "ref": 2})));
+			await ctx.step("create a", () => A.create(ctx.track("create a input", {"id": "1", "ref": "2"})));
+			await ctx.step("create b again", () => B.create(ctx.track("create b again input", {"pk": 3, "ref": 4})));
+			ctx.respond("getItem", answer({"Item": {"id": {"S": "1"}, "ref": {"S": "2"}}}));
+			await ctx.step("get a", () => A.get("1"));
+		}
+	},
+	{
+		// A type lookup can write the THIS settings object and then throw (a THIS Set on a schema with a range
+		// key). attributes() swallows the error; the write must still happen on each call, because a result
+		// the caller kept from the other schema reads that settings object.
+		"name": "THIS Set definition shared by two schemas, one lookup throws",
+		"run": async (ctx) => {
+			const {Schema} = ctx.dynamoose;
+			const definition = {"type": {"value": Set, "settings": {}}, "schema": [ctx.dynamoose.type.THIS]};
+			const B = new Schema({"pk": Number, "refs": definition});
+			const A = new Schema({"id": String, "sk": {"type": String, "rangeKey": true}, "refs": definition});
+			const details = await ctx.step("type details of b", () => B.getAttributeTypeDetails("refs"));
+			const isOfType = () => details.customType.functions.isOfType(new Set([1]), "toDynamo");
+			await ctx.step("b result checks a number", isOfType);
+			await ctx.step("attributes of a", () => A.attributes());
+			await ctx.step("b result after attributes of a", isOfType);
+			await ctx.step("type details of b again", () => B.getAttributeTypeDetails("refs"));
+			await ctx.step("attributes of a again", () => A.attributes());
+			await ctx.step("b result after attributes of a again", isOfType);
+		}
+	},
+	{
+		// User code that replaces a public lookup method (a spy, a plugin) must see every call dynamoose
+		// makes through it, with the same arguments, also for a schema whose lookups ran before.
+		"name": "replaced Schema lookup methods",
+		"run": async (ctx) => {
+			const {Schema} = ctx.dynamoose;
+			const schema = new Schema({
+				"id": String,
+				"name": String,
+				"tags": {"type": Set, "schema": [String]},
+				"address": {"type": Object, "schema": {"city": String}}
+			});
+			const Model = ctx.model("Model", schema);
+			ctx.respond("updateItem", answer({}));
+			const operations = async (label) => {
+				await save(ctx, Model, `${label}: save`, {"id": "1", "name": "n", "tags": new Set(["a"]), "address": {"city": "c"}}, {"return": "request"});
+				await update(ctx, Model, `${label}: update`, {"id": "1"}, {"name": "m", "address": {"city": "d"}});
+				ctx.respond("getItem", answer({"Item": {"id": {"S": "1"}, "name": {"S": "n"}, "tags": {"SS": ["a"]}}}));
+				await ctx.step(`${label}: get`, () => Model.get("1"));
+				await ctx.step(`${label}: attributes`, () => schema.attributes());
+			};
+			await operations("warm");
+			for (const method of ["getAttributeTypeDetails", "getAttributeValue", "getAttributeSettingValue", "getAttributeType"]) {
+				const original = Schema.prototype[method];
+				Schema.prototype[method] = ctx.fn(method, function (...args) {
+					return original.apply(this, args);
+				});
+				try {
+					await operations(`${method} replaced`);
+					await operations(`${method} replaced, again`);
+				} finally {
+					Schema.prototype[method] = original;
+				}
+			}
+		}
+	},
+	{
+		// The Schema constructor writes the timestamp attributes into the caller's definition object, which
+		// an earlier schema can hold as a nested schema.
+		"name": "timestamps schema built on a nested definition of an earlier schema",
+		"run": async (ctx) => {
+			const {Schema} = ctx.dynamoose;
+			const nested = ctx.track("nested definition", {"street": String});
+			const schema = new Schema({"id": String, "address": {"type": Object, "schema": nested}});
+			const Model = ctx.model("Model", schema);
+			await ctx.step("attributes before", () => schema.attributes());
+			await ctx.step("new timestamps schema", () => new Schema(nested, {"timestamps": true}).attributes());
+			await ctx.step("attributes after", () => schema.attributes());
+			await ctx.step("value of address.createdAt", () => schema.getAttributeValue("address.createdAt"));
+			await save(ctx, Model, "save", {"id": "1", "address": {"street": "s", "createdAt": new Date(0)}}, {"return": "request"});
+		}
 	}
 ];
 
