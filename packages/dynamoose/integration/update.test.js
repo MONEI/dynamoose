@@ -114,6 +114,38 @@ describe("Model.update against DynamoDB", () => {
 			expect(await raw()).toEqual({...key, ...seed});
 		});
 
+		it("refuses a nested value of the wrong type and leaves the item as it was", async () => {
+			const seed = {"stats": {"M": {"count": {"N": "2"}}}};
+			const {Model, raw} = await setup({"id": Number, "stats": {"type": Object, "schema": {"count": Number}}}, seed);
+			await expect(Model.update({"id": 1}, {"$SET": {"stats.count": "abc"}})).rejects.toThrow("Expected stats.count to be of type number, instead found type string.");
+			expect(await raw()).toEqual({...key, ...seed});
+		});
+
+		it("refuses a nested value that fails validation and leaves the item as it was", async () => {
+			const seed = {"stats": {"M": {"count": {"N": "2"}}}};
+			const {Model, raw} = await setup({"id": Number, "stats": {"type": Object, "schema": {"count": {"type": Number, "validate": (val) => val > 0}}}}, seed);
+			await expect(Model.update({"id": 1}, {"$SET": {"stats.count": -1}})).rejects.toThrow("stats.count with a value of -1 had a validation error");
+			expect(await raw()).toEqual({...key, ...seed});
+		});
+
+		it("skips a nested key inside a schemaless Object and writes the rest", async () => {
+			const {Model, raw} = await setup({"id": Number, "name": String, "data": Object}, {"data": {"M": {"keep": {"S": "x"}}}});
+			await Model.update({"id": 1}, {"$SET": {"data.extra": {"n": 1}, "name": "y"}});
+			expect(await raw()).toEqual({...key, "name": {"S": "y"}, "data": {"M": {"keep": {"S": "x"}}}});
+		});
+
+		it("skips a nested key the schema does not declare and writes the rest", async () => {
+			const {Model, raw} = await setup({"id": Number, "meta": {"type": Object, "schema": {"name": String}}}, {"meta": {"M": {"name": {"S": "x"}}}});
+			await Model.update({"id": 1}, {"$SET": {"meta.extra": 1, "meta.name": "y"}});
+			expect(await raw()).toEqual({...key, "meta": {"M": {"name": {"S": "y"}}}});
+		});
+
+		it("writes a nested key that saveUnknown covers as it is", async () => {
+			const {Model, raw} = await setup({"id": Number, "data": Object}, {"data": {"M": {"keep": {"S": "x"}}}}, {"saveUnknown": ["data.**"]});
+			await Model.update({"id": 1}, {"$SET": {"data.extra": {"n": 1, "tags": ["a"]}}});
+			expect(await raw()).toEqual({...key, "data": {"M": {"keep": {"S": "x"}, "extra": {"M": {"n": {"N": "1"}, "tags": {"L": [{"S": "a"}]}}}}}});
+		});
+
 		it("writes a nested forced default without a top-level attribute named after its path", async () => {
 			const {Model, raw} = await setup(
 				{"id": Number, "business": {"type": Object, "schema": {"tier": {"type": String, "default": "basic", "forceDefault": true}, "name": String}}},
