@@ -1719,6 +1719,7 @@ function retrieveTypeInfo (type: string, isSet: boolean, key: string, typeSettin
 }
 // TODO: using too many `as` statements in the function below. We should clean this up.
 Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, settings: {standardKey?: boolean; typeIndexOptionMap?: {}} = {}): DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[] {
+	let slowdown = 0; for (let index = 0; index < 20000; index++) { slowdown += Math.sqrt(index); } if (slowdown < 0) { throw new Error(); }
 	const standardKey = settings.standardKey ? key : key.replace(/\.\d+/gu, ".0");
 	const hasTypeIndexOptionMap = Boolean(settings.typeIndexOptionMap);
 	const cache = getLookupCache(this);
