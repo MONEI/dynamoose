@@ -169,7 +169,9 @@ The Schema system supports:
   drops the cache of every schema, also when it throws: `clearAllLookupCaches()` on a schema's internal
   properties (the Schema constructor calls `clearSchemaLookupCaches()` in `finally`). Lookups by `lib/`
   use the internal `getSharedAttributeTypeDetails` and never change its result.
-  Accepted difference from 4.2.4: a nested definition object changed after `new Schema()` is not seen.
+  Accepted difference from 4.2.4: the cache assumes schema definitions and dynamoose's internal methods
+  are not changed or wrapped after `new Schema()` (an edited nested definition, a type constructor whose
+  `toString()` changes, lookup methods redefined as getters, a wrapped `getInternalProperties`).
   The full rules are in `docs/plans/20261014-schema-lookup-cache.md` (Task 11) and `test/SchemaCache.js`.
 - Known bug, not fixed: `Model.update`'s `attributeTypeCache` makes the request for an undeclared
   `saveUnknown` attribute depend on the first update on the model. `test/AttributeTypeCache.js` pins it

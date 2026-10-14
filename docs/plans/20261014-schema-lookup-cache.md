@@ -762,8 +762,8 @@ design; keep the lockfile; leave the Task 8 bug unfixed.
   - not schema data: `type.COMBINE` writes into the settings object it creates; `Model` writes only its own
     internal caches (`clearCache` is unchanged and does not clear the schema cache); `Item`, `Populate`
     and `returnModel` write into items and result objects
-- ⚠️ `getInternalProperties` is still called a different number of times than in 4.2.4. It takes the
-  internal symbol, so user code cannot replace it in a working way; not guarded
+- ⚠️ `getInternalProperties` is still called a different number of times than in 4.2.4: a wrapper that
+  forwards the symbol sees fewer calls. Not guarded, part of the accepted difference (external review below)
 - ⚠️ a getter on a nested definition object runs on the first lookup only (part of the accepted
   difference: the cache reads a nested definition once)
 - validation: `npm run build`; `npm test` 36 suites, 2626 passed, 18 skipped; `npm run test:types`;
@@ -825,6 +825,15 @@ schema has a THIS or Model attribute. Every operation on every schema is faster 
 - [x] control run (current build against a copy of itself): small `get`/`update` -6%, the same gap as
   current against the previous commit, so it comes from the harness, not the change; large, extra-large
   and checkout rows within noise
+
+**External review (accepted difference)**
+
+- [x] the cache assumes schema definitions and dynamoose's internal methods are not changed or wrapped
+  after `new Schema()`: an edited nested definition object, a type constructor whose `toString()` changes,
+  lookup methods redefined as getters (the guard reads them once more), or a wrapped
+  `getInternalProperties`. The user accepted all four ("tampering with schema internals"); no guards
+- [x] `benchmark.js` rejects a `--rounds` that is not a positive integer and a `BENCHMARK_SCALE_CURRENT`
+  that is not a positive number (both ran with no samples or NaN and passed before)
 
 ## Post-Completion
 

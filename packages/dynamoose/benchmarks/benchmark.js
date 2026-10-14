@@ -23,6 +23,9 @@ const builds = {
 	"current": loadBuild(currentDirectory)
 };
 const currentScale = process.env.BENCHMARK_SCALE_CURRENT ? Number(process.env.BENCHMARK_SCALE_CURRENT) : 1;
+if (!(currentScale > 0 && Number.isFinite(currentScale))) {
+	throw new Error(`BENCHMARK_SCALE_CURRENT must be a positive number, got "${process.env.BENCHMARK_SCALE_CURRENT}"`);
+}
 
 if (process.env.EXTRA_SCHEMA) {
 	const extra = require(path.resolve(process.env.EXTRA_SCHEMA));
@@ -438,8 +441,12 @@ async function main (args) {
 			throw new Error("--gate needs BASELINE=<package directory of the base build>");
 		}
 		const settings = quick ? quickSettings : {"rounds": 20, "roundMs": 150, "warmupMs": 300};
-		if (option("--rounds")) {
-			settings.rounds = Number(option("--rounds"));
+		if (args.includes("--rounds")) {
+			const rounds = option("--rounds");
+			if (!/^[1-9]\d*$/u.test(rounds ?? "")) {
+				throw new Error(`--rounds must be a positive integer, got "${rounds}"`);
+			}
+			settings.rounds = Number(rounds);
 		}
 		console.log(`baseline ${builds.baseline.directory} vs current ${builds.current.directory}, node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
 		const passed = await runGate({

@@ -112,6 +112,12 @@ describe("benchmark --gate", () => {
 		expect(() => gate(["--quick"], {"BASELINE": ""})).toThrow(/--gate needs BASELINE/u);
 	});
 
+	// Zero rounds give no samples: NaN medians, every verdict ok and a passing gate.
+	it("Should refuse an invalid round count or scale", () => {
+		expect(() => gate(["--quick", "--rounds", "0"])).toThrow(/--rounds must be a positive integer, got "0"/u);
+		expect(() => gate(["--quick"], {"BENCHMARK_SCALE_CURRENT": "abc"})).toThrow(/BENCHMARK_SCALE_CURRENT must be a positive number/u);
+	});
+
 	// The current build's samples scaled to a tenth make every gated row much slower, in every round.
 	it("Should fail, re-run and write profiles and comparisons for a confirmed slowdown", () => {
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-gate-"));

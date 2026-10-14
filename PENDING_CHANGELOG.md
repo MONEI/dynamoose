@@ -9,7 +9,7 @@
 ### General
 
 - Improved performance by caching schema lookups per Schema: `Model.create`/`Item.save`, `Model.get` and `Model.update` are about 1.5 to 2.5 times as fast on large schemas
-- A nested definition object that is changed after `new Schema()` is no longer seen by the schema; change it before you pass it to `new Schema()`
+- A Schema caches its lookups: it assumes that its definitions and dynamoose's internal methods are not changed or wrapped after `new Schema()` (for example an edited nested definition object, a type constructor whose `toString()` changes, lookup methods redefined as getters, or a wrapped `getInternalProperties`)
 
 ### Bug Fixes
 

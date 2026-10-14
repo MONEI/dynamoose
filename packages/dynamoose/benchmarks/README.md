@@ -30,7 +30,7 @@ The script needs `node --expose-gc`; the npm script passes it.
 `npm run benchmark:smoke` (jest, `smoke.test.js` and `gate.test.js`) checks that `--quick` reports
 every operation and stage, that `--profile` writes a profile (update on large) and works with
 `EXTRA_SCHEMA`, the gate's verdict rule, and that `--gate` passes on two quick rounds, refuses to run
-without `BASELINE`, and on a forced slowdown (`BENCHMARK_SCALE_CURRENT`, a test hook) re-runs, exits
+without `BASELINE` or with an invalid `--rounds` or scale, and on a forced slowdown (`BENCHMARK_SCALE_CURRENT`, a test hook) re-runs, exits
 with code 1 and writes the profiles and comparisons.
 
 ## Method
