@@ -14,3 +14,9 @@
 - Fixed `Model.update` refusing `$REMOVE` of a nested path (`a.b`, `a[0]`) when its top-level parent is required
 - Fixed `Model.update` turning `$REMOVE` of a nested path into a `SET` of the parent's whole default value
 - Fixed `Model.update` sending a raw, unconverted value when a forced default replaces a `$SET` on a nested path
+- Fixed `Model.update` writing nested-path values without the schema: `Date` threw, `enum`, `validate` and `set` modifiers were skipped, and `$ADD` of an array to a nested set sent a list
+- Fixed `Model.update` writing `NULL` for a nested path set to `undefined` instead of removing it, which also skipped the required check
+- Fixed `Model.update` writing a nested forced default as a top-level attribute named after its dotted path
+- Fixed `Model.update` typing a value by another attribute's schema when a `$REMOVE` or nested path came before it, for example writing a list as a string set
+- Fixed `Model.update` treating a nested path component as the top-level attribute of the same name, for combine sources and forced defaults
+- Fixed `Model.update` throwing "all or none of the combine attributes" when the update writes none of them

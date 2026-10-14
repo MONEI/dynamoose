@@ -819,6 +819,17 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		let index = 0;
 		// Track which values are already in DynamoDB format to avoid double conversion
 		const alreadyConvertedValues = new Set<string>();
+		// A nested value goes through the schema the same way a top-level one does: wrap it in the
+		// object its path describes, convert that, and read the value back. Every list index maps to
+		// element 0, since all elements of a list share one schema. Required is checked separately,
+		// on the path itself, because the wrapper lacks the siblings of the value.
+		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => {
+			const segments = parsePathWithArrayIndices(path);
+			const wrapped = segments.reduceRight((child, segment) => segment.type === "index" ? [child] : {[segment.value]: child}, value as any);
+			const converted = await this.Item.objectFromSchema(wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false} as any);
+			const result = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
+			return awsConverter().convertToAttr(result);
+		};
 		const getUpdateExpressionObject: () => Promise<any> = async () => {
 			const updateTypes = [
 				{"name": "$SET", "operator": " = ", "objectFromSchemaSettings": {"validate": true, "enum": true, "forceDefault": true, "required": "nested", "modifiers": ["set"]}},
@@ -989,16 +1000,12 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						const hasDotNotation = subKey && typeof subKey === "string" && subKey.includes(".");
 
 						if (hasArrayIndex || hasDotNotation) {
-							// For paths with array indices or dot notation, we're setting a single value at a specific location
-							// Convert the value directly to DynamoDB format using the AWS converter
-							// This handles cases like:
-							// - "keywords[0]" = "value"
-							// - "reps[0].firstName" = "John"
-							// - "business.companyName" = "New Name"
-							// - "business.address.city" = "Madrid"
-							subValue = awsConverter().convertToAttr(subValue);
-							// Mark this value as already converted to prevent double conversion later
-							alreadyConvertedValues.add(`:v${index}`);
+							// An undefined value stays undefined, so the path is removed below, as a top-level attribute is
+							if (subValue !== undefined) {
+								subValue = await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
+								// Mark this value as already converted to prevent double conversion later
+								alreadyConvertedValues.add(`:v${index}`);
+							}
 						} else {
 							// Original logic for simple top-level attributes like "name", "age"
 							const schemaObj = {[baseAttributeName]: dynamoType === "L" && !Array.isArray(subValue) ? [subValue] : subValue};
@@ -1031,10 +1038,13 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					if (subValue !== dynamooseUndefined && checkAttributeName) {
 						const defaultValue = await schema.defaultCheck(checkAttributeName, undefined, updateType.objectFromSchemaSettings);
 						if (defaultValue) {
-							subValue = defaultValue;
-							// The raw default replaces a value that may already be converted
-							alreadyConvertedValues.delete(`:v${index}`);
 							updateType = updateTypesMap.get("$SET");
+							if (subKey === baseAttributeName) {
+								subValue = defaultValue;
+							} else {
+								subValue = await convertNestedValue(subKey, defaultValue, updateType.objectFromSchemaSettings);
+								alreadyConvertedValues.add(`:v${index}`);
+							}
 						}
 					}
 
@@ -1141,8 +1151,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				return obj;
 			})()));
 
-			// Optimize combine type processing - avoid multiple array iterations
-			const expressionAttributeNamesMap = new Map(Object.entries(returnObject.ExpressionAttributeNames));
+			// The first name of each expression term is the top-level attribute it writes. The names
+			// after it are nested path components, which can share a name with a top-level attribute.
+			const topLevelNameKeys = new Map<string, string>();
+			for (const term of Object.values(returnObject.UpdateExpression).flat() as string[]) {
+				const key = term.match(/^#a\d+/u)?.[0];
+				if (key) {
+					topLevelNameKeys.set(returnObject.ExpressionAttributeNames[key], key);
+				}
+			}
 			const setAndRemoveExpressions = [...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", ");
 			// Every attribute name referenced anywhere in the update, across all four expression groups.
 			// The key guard below has to see $ADD and $DELETE as well, otherwise a source can be written
@@ -1177,7 +1194,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				// key it is derived from.
 				if (details.attribute === hashKeyName || details.attribute === rangeKeyName) {
 					const keySourcesBeingUpdated = details.type.typeSettings.attributes.filter((attr) => {
-						const expressionKey = [...expressionAttributeNamesMap].find(([key, value]) => value === attr)?.[0];
+						const expressionKey = topLevelNameKeys.get(attr);
 						return expressionKey && referencedExpressionKeys.has(expressionKey);
 					});
 
@@ -1188,11 +1205,16 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					continue;
 				}
 
+				// An update that writes none of the sources leaves the combine attribute as it is
+				if (!details.type.typeSettings.attributes.some((attr) => topLevelNameKeys.has(attr))) {
+					continue;
+				}
+
 				const invalidAttributes = [];
 
 				// Check validity of all combine attributes
 				for (const attr of details.type.typeSettings.attributes) {
-					const expressionKey = [...expressionAttributeNamesMap].find(([key, value]) => value === attr)?.[0];
+					const expressionKey = topLevelNameKeys.get(attr);
 					const doesExist = Boolean(expressionKey);
 					const isValid = doesExist && setAndRemoveExpressions.includes(expressionKey);
 
@@ -1217,7 +1239,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					// Efficient value collection using the map we already have
 					const combinedValues = [];
 					for (const attribute of details.type.typeSettings.attributes) {
-						const expressionKey = [...expressionAttributeNamesMap].find(([key, value]) => value === attribute)?.[0];
+						const expressionKey = topLevelNameKeys.get(attribute);
 						if (expressionKey) {
 							const valueKey = expressionKey.replace("#a", ":v");
 							const value = returnObject.ExpressionAttributeValues[valueKey];
@@ -1229,15 +1251,14 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 					returnObject.ExpressionAttributeValues[`:v${nextIndex}`] = combinedValues.join(details.type.typeSettings.separator);
 					returnObject.UpdateExpression.SET.push(`#a${nextIndex} = :v${nextIndex}`);
+					topLevelNameKeys.set(details.attribute, `#a${nextIndex}`);
 				}
 			}
 
-			// Optimize default value processing - use Set for O(1) attribute lookup
-			const currentAttributeNamesSet = new Set(Object.values(returnObject.ExpressionAttributeNames));
-
-			await Promise.all(schemaAttributes.map(async (attribute) => {
+			// A nested forced default is applied when its parent is written, never as a top-level attribute
+			await Promise.all(schemaAttributes.filter((attribute) => !attribute.includes(".")).map(async (attribute) => {
 				const defaultValue = await schema.defaultCheck(attribute, undefined, {"forceDefault": true});
-				if (defaultValue && !currentAttributeNamesSet.has(attribute)) {
+				if (defaultValue && !topLevelNameKeys.has(attribute)) {
 					const updateType = updateTypesMap.get("$SET");
 
 					returnObject.ExpressionAttributeNames[`#a${index}`] = attribute;
@@ -1248,14 +1269,13 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				}
 			}));
 
-			// Optimize final value processing - avoid repeated Object.values/keys calls
-			const attributeNames = Object.values(returnObject.ExpressionAttributeNames);
-			const attributeValues = Object.values(returnObject.ExpressionAttributeValues);
-			const attributeValueKeys = Object.keys(returnObject.ExpressionAttributeValues);
-
-			attributeNames.forEach((attribute: string, index) => {
-				const value: ValueType = attributeValues[index];
-				const valueKey = attributeValueKeys[index];
+			// Value :vN belongs to name #aN. Nested values are converted already, so every value left
+			// here belongs to a top-level attribute.
+			Object.entries(returnObject.ExpressionAttributeValues).forEach(([valueKey, value]: [string, ValueType]) => {
+				if (alreadyConvertedValues.has(valueKey)) {
+					return;
+				}
+				const attribute: string = returnObject.ExpressionAttributeNames[valueKey.replace(":v", "#a")];
 				// Cache expensive schema.getAttributeType() calls
 				// Use pipe delimiter (|) which cannot appear in DynamoDB attribute names
 				const attributeTypeKey = `${attribute}|${typeof value}`;

@@ -3169,6 +3169,105 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues[":v0"]).toEqual({"S": "Default"});
 				});
 
+				it("Should not write a nested forced default as a top-level attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"companyName": {"type": String, "default": "Default", "forceDefault": true}, "other": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"business.other": "x"}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "business", "#a1": "other"});
+				});
+
+				it("Should convert a nested Date with the attribute's storage setting", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"at": {"type": {"value": Date, "settings": {"storage": "seconds"}}}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.at": new Date(1700000000000)}});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "1700000000"}});
+				});
+
+				it("Should convert a Date inside a list element", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "items": {"type": Array, "schema": [{"type": Object, "schema": {"at": Date}}]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"items[2].at": new Date(1700000000000)}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0[2].#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "1700000000000"}});
+				});
+
+				it("Should throw error for nested $SET value outside the enum", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"status": {"type": String, "enum": ["A", "B"]}}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.status": "Z"}})).rejects.toThrow("meta.status must equal [\"A\",\"B\"], but is set to Z");
+				});
+
+				it("Should throw error for nested $SET value that fails validation", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"count": {"type": Number, "validate": (val) => val > 0}}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.count": -1}})).rejects.toThrow("meta.count with a value of -1 had a validation error when trying to save the item");
+				});
+
+				it("Should apply a nested set modifier", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": {"type": String, "set": (val) => val.toUpperCase()}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.name": "abc"}});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "ABC"}});
+				});
+
+				it("Should send a string set for nested $ADD of an array to a set attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"tags": {"type": Set, "schema": [String]}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$ADD": {"meta.tags": ["a"]}});
+					expect(updateItemParams.UpdateExpression).toEqual("ADD #a0.#a1 :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"SS": ["a"]}});
+				});
+
+				it("Should remove a nested attribute for $SET to undefined", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.name": undefined}});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0.#a1");
+					expect(updateItemParams.ExpressionAttributeValues).toBeUndefined();
+				});
+
+				it("Should throw error for $SET to undefined of a required nested attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": {"type": String, "required": true}}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.name": undefined}})).rejects.toThrow("meta.name is a required property but has no value when trying to save item");
+				});
+
+				it("Should type each value by its own attribute when $REMOVE precedes $SET", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "tags": {"type": Set, "schema": [String]}, "list": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["tags"], "$SET": {"list": ["a", "b"]}});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v1": {"L": [{"S": "a"}, {"S": "b"}]}});
+				});
+
+				it("Should not count a nested path component as a combine source", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "meta": {"type": Object, "schema": {"data1": String}}, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.data1": "x"}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+				});
+
+				it("Should apply a top-level forced default that shares its name with a nested path component", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "status": {"type": String, "default": "active", "forceDefault": true}, "meta": {"type": Object, "schema": {"status": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.status": "x"}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0, #a2 = :v2");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "meta", "#a1": "status", "#a2": "status"});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "x"}, ":v2": {"S": "active"}});
+				});
+
 				it("Should send correct params to updateItem with $REMOVE of a list element in a required list", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "tags": {"type": Array, "required": true, "schema": [String]}});
@@ -4606,6 +4705,15 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
+				});
+
+				it("Shouldn't require combine attributes when updating none of them", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "name": String, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "name"});
 				});
 
 				it("Should throw error if updating one combine property", () => {
