@@ -3160,6 +3160,15 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "Default"}});
 				});
 
+				it("Should send correct params to updateItem with $SET nested attribute that has a forced default", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"companyName": {"type": String, "default": "Default", "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"business.companyName": "ACME Corp"}});
+					expect(updateItemParams.ExpressionAttributeNames).toMatchObject({"#a0": "business", "#a1": "companyName"});
+					expect(updateItemParams.ExpressionAttributeValues[":v0"]).toEqual({"S": "Default"});
+				});
+
 				it("Should send correct params to updateItem with $REMOVE of a list element in a required list", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "tags": {"type": Array, "required": true, "schema": [String]}});
