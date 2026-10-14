@@ -826,9 +826,22 @@ export interface SchemaGetAttributeSettingValue {
 	typeIndexOptionMap?: any;
 }
 
+interface SchemaLookupEntry<T> {
+	value: T;
+	// The path walk met an array of attribute definitions, the only place a typeIndexOptionMap is read.
+	reachedDefinitionArray: boolean;
+}
+interface SchemaLookupCache {
+	epoch: number;
+	values: Map<string, SchemaLookupEntry<AttributeDefinition>>;
+	typeDetails: Map<string, SchemaLookupEntry<DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[]>>;
+	attributes?: string[];
+}
+
 interface SchemaInternalProperties {
 	schemaObject: SchemaDefinition;
 	settings: SchemaSettings;
+	lookupCache?: SchemaLookupCache;
 	getMapSettingValuesForKey: (key: string, settingNames?: string[]) => string[];
 	getMapSettingObject: () => {[key: string]: string};
 	getDefaultMapAttribute: (attribute: string) => string;
@@ -1574,7 +1587,35 @@ Schema.prototype.getSettingValue = function (this: Schema, setting: string): any
 interface SchemaAttributesMethodSettings {
 	includeMaps: boolean;
 }
+// A schema's attributes object can share nested objects with other schemas (a nested Schema instance
+// is embedded by reference), so a write to one schema can change what another resolves. Bumping the
+// epoch drops the lookup cache of every schema.
+let lookupCacheEpoch = 0;
+export function clearSchemaLookupCaches (): void {
+	lookupCacheEpoch++;
+}
+function getLookupCache (schema: Schema): SchemaLookupCache {
+	const schemaInternalProperties = schema.getInternalProperties(internalProperties);
+	let cache = schemaInternalProperties.lookupCache;
+	if (!cache || cache.epoch !== lookupCacheEpoch) {
+		cache = {
+			"epoch": lookupCacheEpoch,
+			"values": new Map(),
+			"typeDetails": new Map()
+		};
+		schemaInternalProperties.lookupCache = cache;
+	}
+	return cache;
+}
+
 Schema.prototype.attributes = function (this: Schema, object?: ObjectType, settings?: SchemaAttributesMethodSettings): string[] {
+	const isCacheable = object === undefined && settings === undefined;
+	const cache = isCacheable ? getLookupCache(this) : undefined;
+	// attributes() returns a new array on every call, so the cached array is never handed out.
+	if (cache?.attributes) {
+		return [...cache.attributes];
+	}
+
 	const typePaths = object && this.getTypePaths(object);
 	const main = (object: SchemaDefinition, existingKey = ""): string[] => {
 		return Object.keys(object).reduce((accumulator: string[], key) => {
@@ -1612,13 +1653,30 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 		}, []);
 	};
 
-	return main(this.getInternalProperties(internalProperties).schemaObject);
+	const result = main(this.getInternalProperties(internalProperties).schemaObject);
+	if (cache) {
+		cache.attributes = [...result];
+	}
+	return result;
 };
 
 Schema.prototype.getAttributeValue = function (this: Schema, key: string, settings?: {standardKey?: boolean; typeIndexOptionMap?: {}}): AttributeDefinition {
+	const path = settings?.standardKey ? key : key.replace(/\.\d+/gu, ".0");
+	const hasTypeIndexOptionMap = Boolean(settings && settings.typeIndexOptionMap);
+	const cache = getLookupCache(this);
+	const cached = cache.values.get(path);
+	if (cached && !(cached.reachedDefinitionArray && hasTypeIndexOptionMap)) {
+		return cached.value;
+	}
+
+	let reachedDefinitionArray = false;
+	// A key the attributes object only inherits (constructor, toString) is never cached: such keys come
+	// from saveUnknown input, and the cache holds only the schema's own attributes.
+	let isOwnPath = true;
 	const previousKeyParts = [];
-	let result = (settings?.standardKey ? key : key.replace(/\.\d+/gu, ".0")).split(".").reduce((result, part) => {
+	let result = path.split(".").reduce((result, part) => {
 		if (Array.isArray(result)) {
+			reachedDefinitionArray = true;
 			const predefinedIndex = settings && settings.typeIndexOptionMap && settings.typeIndexOptionMap[previousKeyParts.join(".")];
 			if (predefinedIndex !== undefined) {
 				result = result[predefinedIndex];
@@ -1627,16 +1685,24 @@ Schema.prototype.getAttributeValue = function (this: Schema, key: string, settin
 			}
 		}
 		previousKeyParts.push(part);
-		return utils.object.get(result.schema, part);
+		const schema = result.schema;
+		if (isOwnPath && !(schema && Object.prototype.hasOwnProperty.call(schema, part))) {
+			isOwnPath = false;
+		}
+		return utils.object.get(schema, part);
 	}, {"schema": this.getInternalProperties(internalProperties).schemaObject} as any);
 
 	if (Array.isArray(result)) {
+		reachedDefinitionArray = true;
 		const predefinedIndex = settings && settings.typeIndexOptionMap && settings.typeIndexOptionMap[previousKeyParts.join(".")];
 		if (predefinedIndex !== undefined) {
 			result = result[predefinedIndex];
 		}
 	}
 
+	if (isOwnPath && result !== undefined && !(reachedDefinitionArray && hasTypeIndexOptionMap)) {
+		cache.values.set(path, {"value": result, reachedDefinitionArray});
+	}
 	return result;
 };
 
@@ -1654,6 +1720,13 @@ function retrieveTypeInfo (type: string, isSet: boolean, key: string, typeSettin
 // TODO: using too many `as` statements in the function below. We should clean this up.
 Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, settings: {standardKey?: boolean; typeIndexOptionMap?: {}} = {}): DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[] {
 	const standardKey = settings.standardKey ? key : key.replace(/\.\d+/gu, ".0");
+	const hasTypeIndexOptionMap = Boolean(settings.typeIndexOptionMap);
+	const cache = getLookupCache(this);
+	const cached = cache.typeDetails.get(standardKey);
+	if (cached && !(cached.reachedDefinitionArray && hasTypeIndexOptionMap)) {
+		return cached.value;
+	}
+
 	const val = this.getAttributeValue(standardKey, {...settings, "standardKey": true});
 	if (typeof val === "undefined") {
 		throw new CustomError.UnknownAttribute(`Invalid Attribute: ${key}`);
@@ -1728,5 +1801,11 @@ Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, 
 	});
 
 	const returnObject = result.length < 2 ? result[0] : result;
+	// The details depend on the typeIndexOptionMap only through the attribute value, so they follow the
+	// cache entry of that value.
+	const valueEntry = cache.values.get(standardKey);
+	if (valueEntry && valueEntry.value === val && !(valueEntry.reachedDefinitionArray && hasTypeIndexOptionMap)) {
+		cache.typeDetails.set(standardKey, {"value": returnObject, "reachedDefinitionArray": valueEntry.reachedDefinitionArray});
+	}
 	return returnObject;
 };

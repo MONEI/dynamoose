@@ -290,19 +290,78 @@ The create gap to upstream is the `save` conform pass (Context); update and get 
 - Modify: `packages/dynamoose/lib/Schema.ts`
 - Modify: `packages/dynamoose/lib/Table/index.ts`
 
-- [ ] write the tests first (`test/SchemaCache.js`): a second lookup returns the same reference; a lookup,
+- [x] write the tests first (`test/SchemaCache.js`): a second lookup returns the same reference; a lookup,
   then `new Table(..., {expires})`, then `attributes()` contains `ttl` and the ttl default is applied; an
   array-of-definitions attribute with a `typeIndexOptionMap` returns the per-item result; a miss or a
   thrown error adds no entry; a function `default` runs on every call; two schemas never share entries;
   `constructor` and `__proto__` paths behave as uncached
-- [ ] search `lib/` for writes to `schemaObject` or schema settings after construction; record the result
+- [x] search `lib/` for writes to `schemaObject` or schema settings after construction; record the result
   in this plan
-- [ ] implement the cache for `getAttributeValue`, `getAttributeTypeDetails` and `attributes()`
+- [x] implement the cache for `getAttributeValue`, `getAttributeTypeDetails` and `attributes()`
   (no arguments), following Technical Details
-- [ ] clear the cache after the `ttl` write in `Table/index.ts`, and at any other write found above
-- [ ] `npm run build`; cache tests, equivalence suite, unit suite, lint, type tests pass
-- [ ] run the DynamoDB Local tests
-- [ ] run the benchmark and the live `EXTRA_SCHEMA` Checkout run; record the numbers in this plan
+- [x] clear the cache after the `ttl` write in `Table/index.ts`, and at any other write found above
+- [x] `npm run build`; cache tests, equivalence suite, unit suite, lint, type tests pass
+- [x] run the DynamoDB Local tests
+- [x] run the benchmark and the live `EXTRA_SCHEMA` Checkout run; record the numbers in this plan
+- search for writes after construction (`schemaObject`, schema `settings`, `utils.object.set` in `lib/`): the
+  only write is the `ttl` attribute at `Table/index.ts:280`. Schema settings are not written after the
+  constructor, and the cached lookups do not read them. A nested Schema instance is embedded by reference
+  (`Schema.ts:1041`), so the `ttl` write to one schema also adds `<attribute>.ttl` to every schema that nests
+  it. The `ttl` write therefore bumps a module-level epoch that drops the cache of every schema, not only the
+  written one (`clearSchemaLookupCaches`).
+- cache rules as built: a `Map` per Schema in `lookupCache` (internal properties, made on first use);
+  `getAttributeValue` caches a value only when every step of the path walk read an own property of a
+  `schema` object, so keys that the attributes object only inherits (`constructor`, `toString`,
+  `__proto__`) and misses are never cached; `getAttributeTypeDetails` caches only when the value it read
+  is cached, with the same array-of-definitions flag; `attributes()` without arguments caches a copy and
+  returns a new copy on every call, because callers have always received a new array.
+- ⚠️ a caller that changes an attribute definition object after the Schema constructor (the constructor copies
+  the top level only, nested objects are the caller's) is not seen by the cache. `lib/` never does this.
+
+**Numbers with the cache (2026-10-14, node v24.21.0, full runs: 10 rounds of 200 ms, medians in ops/s)**
+
+Current (cache) vs `dynamoose-baseline` 4.2.4, plain `node`, load average 5.9 at start, 7.7 at end:
+
+| schema      | operation      | baseline | current |  change |
+| ----------- | -------------- | -------: | ------: | ------: |
+| large       | create         |    128.5 |   290.9 | +126.5% |
+| large       | create-request |    127.0 |   303.9 | +139.3% |
+| large       | get            |    260.6 |   640.2 | +145.7% |
+| large       | update         |    153.3 |   370.9 | +141.9% |
+| large       | update-nested  |    167.2 |   421.2 | +151.9% |
+| extra-large | create         |     70.1 |   149.8 | +113.6% |
+| extra-large | update         |     87.1 |   193.4 | +122.1% |
+| checkout    | create         |    140.1 |   215.6 |  +53.9% |
+| checkout    | create-request |    141.4 |   225.0 |  +59.2% |
+| checkout    | get            |    308.0 |   553.4 |  +79.7% |
+| checkout    | update         |     96.2 |   231.6 | +140.7% |
+| checkout    | update-nested  |    153.7 |   329.8 | +114.6% |
+
+Every operation on every schema is faster (small and medium: +88% to +166%). Stages on checkout:
+`getAttributeValue` +245%, `getAttributeTypeDetails` +753%, `attributes()` from 8.2k to 6.6M ops/s,
+`objectFromSchema` toDynamo +72% and fromDynamo +41%, save conform +62%, `getTypePaths` +4.5% (not cached).
+
+Live `EXTRA_SCHEMA` run (common's `OperationModel` schema, `node --import tsx` from common), load average
+6.5 at start, 5.8 at end:
+
+| schema        | operation      | baseline | current | change |
+| ------------- | -------------- | -------: | ------: | -----: |
+| checkout-live | create         |    122.1 |   143.9 | +17.9% |
+| checkout-live | create-request |    118.9 |   144.5 | +21.6% |
+| checkout-live | get            |    235.1 |   243.8 |  +3.7% |
+| checkout-live | update         |     84.2 |   142.7 | +69.6% |
+| checkout-live | update-nested  |    129.0 |   181.1 | +40.4% |
+| checkout      | create         |    121.5 |   138.1 | +13.7% |
+| checkout      | get            |    233.9 |   237.6 |  +1.6% |
+| checkout      | update         |     83.3 |   145.3 | +74.4% |
+
+- ⚠️ `--import tsx` skews the operation numbers, not the stages: a full run under `--import tsx` without
+  `EXTRA_SCHEMA` (load average 5.8 at start) gives the same small gains for the fixture (checkout create
+  +13.5%, get +2.8%; large create +63.8%) as the live run, against +53.9%, +79.7% and +126.5% under plain
+  `node`. The stage numbers are the same in all three runs. Under tsx the current build loses more than the
+  baseline (large create current 291 → 198 ops/s, baseline 129 → 121). In the same tsx run the live schema
+  and the fixture agree within noise, so the fixture numbers under plain `node` stand for the live schema.
+  Where tsx loses the time is a question for Task 6.
 
 ### Task 6: Re-profile and record what remains
 

@@ -6,7 +6,7 @@ import {Model} from "../Model";
 import {custom as customDefaults, original as originalDefaults} from "./defaults";
 import utils from "../utils";
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
-import {IndexItem, TableIndex} from "../Schema";
+import {IndexItem, TableIndex, clearSchemaLookupCaches} from "../Schema";
 import {Item as ItemCarrier} from "../Item";
 import {createTable, createTableRequest, updateTable, updateTimeToLive, waitForActive} from "./utilities";
 import {TableClass} from "./types";
@@ -290,6 +290,8 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 					}
 				};
 			});
+			// The only write to a schema after its constructor: the lookups cached until now lack the ttl attribute.
+			clearSchemaLookupCaches();
 		}
 
 		if (options.initialize === undefined || options.initialize === true) {
