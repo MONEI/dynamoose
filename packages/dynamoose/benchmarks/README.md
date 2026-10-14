@@ -13,10 +13,12 @@ the numbers contain no network time.
 ```bash
 # In packages/dynamoose
 npm run build
-npm run benchmark                                  # full run (about 1.5 minutes)
+npm run benchmark                                  # full run (about 4 minutes)
 npm run benchmark -- --quick                       # few short rounds, numbers are noisy
 npm run benchmark -- --json results.json           # also write the results as JSON
-npm run benchmark:smoke                            # jest: --quick reports a number for every operation
+npm run benchmark:smoke                            # jest: --quick and --profile work for every operation
+npm run benchmark -- --profile update large        # CPU profile of one operation or stage
+npm run benchmark -- --profile create large --build baseline --out create.cpuprofile
 ```
 
 The script needs `node --expose-gc`; the npm script passes it.
@@ -41,6 +43,34 @@ The script needs `node --expose-gc`; the npm script passes it.
 | `update-nested`  | `Model.update(key, {"$SET": {"a.b": value}})`    | `updateItem`: the stored item |
 
 The stored item is the `putItem` request of the baseline build for one generated item.
+
+## Stages (report only)
+
+The run also measures internal stages of the operations above, on every schema, in a second table
+(`stages` in the JSON file). The settings are the ones `save` and `get` pass.
+
+| stage                         | call                                                                 |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `getAttributeValue`           | `schema.getAttributeValue(attribute)` for every attribute (one op)   |
+| `getAttributeTypeDetails`     | `schema.getAttributeTypeDetails(attribute)` for every attribute      |
+| `attributes`                  | `schema.attributes()`                                                |
+| `getTypePaths`                | `schema.getTypePaths(data, {"type": "toDynamo"})`                    |
+| `objectFromSchema-toDynamo`   | `Item.objectFromSchema` with the `save` settings                     |
+| `objectFromSchema-fromDynamo` | `Item.objectFromSchema` with the `get` settings, on the stored item  |
+| `save-conform`                | `conformToSchema` on the stored item, the second pass of `save`      |
+
+## Profile mode
+
+`--profile <name> <schema>` runs one operation or stage on one build (`--build current|baseline`,
+default `current`) under the V8 CPU profiler, 5 seconds (`--quick`: 0.3 seconds) after a warm-up. The
+inputs are made before the profiler starts. It writes a `.cpuprofile` (`--out <file>`, default
+`<build>-<schema>-<name>.cpuprofile`; open it in Chrome DevTools or speedscope) and prints:
+
+- the top functions by self time and by total time, with file and line in `dist` (the line of the
+  compiled JavaScript)
+- the self time per file, dynamoose and its dependencies
+
+Total time counts a function once per sample, also when it is on the stack more than once.
 
 ## Schemas
 

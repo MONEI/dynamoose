@@ -1,8 +1,13 @@
 // CPU-only benchmark: runs the same operations through the current build (`dist`) and the published
 // baseline (`dynamoose-baseline`) in one process, against a stub DynamoDB client that never touches
 // the network. Usage: node --expose-gc benchmarks/benchmark.js [--quick] [--json <file>]
+// Profile one operation or stage: node --expose-gc benchmarks/benchmark.js --profile <name> <schema>
+// [--build current|baseline] [--out <file>] [--quick]
 const fs = require("fs");
+const inspector = require("inspector");
+const path = require("path");
 const {performance} = require("perf_hooks");
+const {promisify} = require("util");
 const {createSmallSchema, createMediumSchema, createLargeSchema, createExtraLargeSchema} = require("./schemas");
 
 // Test data generators for different schema types
@@ -324,10 +329,12 @@ function generateTestData (schemaType) {
 const builds = {
 	"baseline": {
 		"dynamoose": require("dynamoose-baseline"),
+		"Item": require("dynamoose-baseline/dist/Item").Item,
 		"version": require("dynamoose-baseline/package.json").version
 	},
 	"current": {
 		"dynamoose": require("../dist"),
+		"Item": require("../dist/Item").Item,
 		"version": require("../package.json").version
 	}
 };
@@ -388,6 +395,42 @@ const operations = {
 	}
 };
 
+// Report-only micro-benchmarks of internal stages. The settings copy the ones `save` and `get` pass.
+// A lookup stage counts one pass over all attributes of the schema as one op.
+const saveToDynamoSettings = {"type": "toDynamo", "defaults": true, "validate": true, "required": true, "enum": true, "forceDefault": true, "combine": true, "saveUnknown": true, "customTypesDynamo": true, "updateTimestamps": true, "modifiers": ["set"], "mapAttributes": true};
+const getFromDynamoSettings = {"type": "fromDynamo", "customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "mapAttributes": true};
+const saveConformSettings = {"type": "fromDynamo", "combine": true, "customTypesDynamo": true, "saveUnknown": true, "modifiers": ["get"], "mapAttributes": true};
+const stages = {
+	"getAttributeValue": {
+		"prepare": (s) => s.attributes,
+		"run": (s, attributes) => attributes.forEach((attribute) => s.schema.getAttributeValue(attribute))
+	},
+	"getAttributeTypeDetails": {
+		"prepare": (s) => s.attributes,
+		"run": (s, attributes) => attributes.forEach((attribute) => s.schema.getAttributeTypeDetails(attribute))
+	},
+	"attributes": {
+		"prepare": () => undefined,
+		"run": (s) => s.schema.attributes()
+	},
+	"getTypePaths": {
+		"prepare": (s) => s.reference,
+		"run": (s, object) => s.schema.getTypePaths(object, {"type": "toDynamo"})
+	},
+	"objectFromSchema-toDynamo": {
+		"prepare": (s) => new s.Model(s.config.data()),
+		"run": (s, item) => s.Item.objectFromSchema(item, s.Model.Model, saveToDynamoSettings)
+	},
+	"objectFromSchema-fromDynamo": {
+		"prepare": (s) => new s.Model(s.stored, {"type": "fromDynamo"}),
+		"run": (s, item) => s.Item.objectFromSchema(item, s.Model.Model, getFromDynamoSettings)
+	},
+	"save-conform": {
+		"prepare": (s) => new s.Model(s.stored),
+		"run": (s, item) => item.conformToSchema(saveConformSettings)
+	}
+};
+
 // Canned responses keyed by table name: what DynamoDB would return for the stored reference item.
 const storedItems = {};
 const stubClient = {
@@ -401,25 +444,44 @@ async function setup () {
 	for (const [schemaName, config] of Object.entries(schemas)) {
 		const tableName = `Benchmark_${schemaName}`;
 		const models = {};
+		const schemaInstances = {};
 		for (const [buildName, build] of Object.entries(builds)) {
 			build.dynamoose.aws.ddb.set(stubClient);
-			models[buildName] = build.dynamoose.model(tableName, config.create(build.dynamoose), {"create": false, "waitForActive": false});
+			schemaInstances[buildName] = config.create(build.dynamoose);
+			models[buildName] = build.dynamoose.model(tableName, schemaInstances[buildName], {"create": false, "waitForActive": false});
 		}
 		const reference = config.data();
 		const request = await new models.baseline(reference).save({"return": "request"});
 		storedItems[tableName] = request.Item;
+		const shared = {config, reference, models, schemaInstances, "stored": request.Item};
 		for (const [operationName, operation] of Object.entries(operations)) {
 			if (operation.needs && !config[operation.needs]) {
 				continue;
 			}
-			suites.push({"schema": schemaName, "operation": operationName, "steps": operation, config, reference, models});
+			suites.push({"kind": "operation", "schema": schemaName, "operation": operationName, "steps": operation, ...shared});
+		}
+		for (const [stageName, stage] of Object.entries(stages)) {
+			suites.push({"kind": "stage", "schema": schemaName, "operation": stageName, "steps": stage, ...shared});
 		}
 	}
 	return suites;
 }
 
+function stateFor (suite, buildName) {
+	const schema = suite.schemaInstances[buildName];
+	return {
+		"Model": suite.models[buildName],
+		"Item": builds[buildName].Item,
+		schema,
+		"attributes": schema.attributes(),
+		"config": suite.config,
+		"reference": suite.reference,
+		"stored": suite.stored
+	};
+}
+
 async function measure (suite, buildName, durationMs) {
-	const state = {"Model": suite.models[buildName], "config": suite.config, "reference": suite.reference};
+	const state = stateFor(suite, buildName);
 	let count = 0;
 	let elapsed = 0;
 	while (elapsed < durationMs) {
@@ -463,6 +525,7 @@ async function run ({rounds, roundMs, warmupMs}) {
 		const baseline = median(samples[index].baseline);
 		const current = median(samples[index].current);
 		return {
+			"kind": suite.kind,
 			"schema": suite.schema,
 			"operation": suite.operation,
 			"baseline": {"median": baseline, "samples": samples[index].baseline},
@@ -472,16 +535,143 @@ async function run ({rounds, roundMs, warmupMs}) {
 	});
 }
 
-function printTable (results) {
-	const rows = [["schema", "operation", "baseline ops/s", "current ops/s", "change"]];
+// Columns listed in `leftColumns` are padded on the right, all others on the left.
+function printRows (rows, leftColumns) {
+	const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)));
+	for (const row of rows) {
+		console.log(row.map((cell, column) => leftColumns.includes(column) ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join("  ").trimEnd());
+	}
+}
+
+function printTable (results, nameHeader) {
+	const rows = [["schema", nameHeader, "baseline ops/s", "current ops/s", "change"]];
 	for (const result of results) {
 		const change = `${result.change >= 0 ? "+" : ""}${result.change.toFixed(1)}%`;
 		rows.push([result.schema, result.operation, result.baseline.median.toFixed(1), result.current.median.toFixed(1), change]);
 	}
-	const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)));
-	for (const row of rows) {
-		console.log(row.map((cell, column) => column < 2 ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join("  "));
+	printRows(rows, [0, 1]);
+}
+
+const packageDirectory = path.resolve(__dirname, "..");
+function displayFile (url) {
+	if (!url) {
+		return "(vm)";
 	}
+	const file = url.startsWith("file://") ? new URL(url).pathname : url;
+	const nodeModules = file.lastIndexOf("/node_modules/");
+	if (nodeModules !== -1) {
+		return file.slice(nodeModules + 1);
+	}
+	return path.isAbsolute(file) ? path.relative(packageDirectory, file) : file;
+}
+
+// Self time: samples whose top frame is the function. Total time: samples with the function anywhere on
+// the stack, counted once per sample so recursion does not count twice. Sample i lasts until sample i + 1.
+function analyzeProfile (profile) {
+	const nodes = new Map(profile.nodes.map((node) => [node.id, node]));
+	const parents = new Map();
+	for (const node of profile.nodes) {
+		for (const child of node.children || []) {
+			parents.set(child, node.id);
+		}
+	}
+	const functions = new Map();
+	const functionOf = (node) => {
+		const {functionName, url, lineNumber, columnNumber} = node.callFrame;
+		const key = `${functionName}|${url}|${lineNumber}|${columnNumber}`;
+		if (!functions.has(key)) {
+			functions.set(key, {"name": functionName || "(anonymous)", "file": displayFile(url), "line": lineNumber + 1, "self": 0, "total": 0});
+		}
+		return functions.get(key);
+	};
+	const stacks = new Map();
+	const stackOf = (id) => {
+		if (!stacks.has(id)) {
+			const stack = new Set();
+			for (let current = id; current !== undefined; current = parents.get(current)) {
+				const node = nodes.get(current);
+				if (node.callFrame.functionName !== "(root)") {
+					stack.add(functionOf(node));
+				}
+			}
+			stacks.set(id, stack);
+		}
+		return stacks.get(id);
+	};
+
+	let totalTime = 0;
+	for (let index = 0; index < profile.samples.length; index++) {
+		const duration = profile.timeDeltas[index + 1] || 0;
+		totalTime += duration;
+		const id = profile.samples[index];
+		functionOf(nodes.get(id)).self += duration;
+		for (const entry of stackOf(id)) {
+			entry.total += duration;
+		}
+	}
+
+	const files = new Map();
+	for (const entry of functions.values()) {
+		files.set(entry.file, (files.get(entry.file) || 0) + entry.self);
+	}
+	return {totalTime, "functions": [...functions.values()], files};
+}
+
+function printProfile ({totalTime, functions, files}, limit) {
+	const ms = (microseconds) => (microseconds / 1000).toFixed(1);
+	const share = (microseconds) => `${(microseconds / totalTime * 100).toFixed(1)}%`;
+	const functionRows = (sortKey) => {
+		const rows = [["self ms", "self", "total ms", "total", "function", "location"]];
+		for (const entry of [...functions].sort((a, b) => b[sortKey] - a[sortKey]).slice(0, limit)) {
+			rows.push([ms(entry.self), share(entry.self), ms(entry.total), share(entry.total), entry.name, `${entry.file}:${entry.line}`]);
+		}
+		return rows;
+	};
+
+	console.log(`\nprofiled ${ms(totalTime)} ms\n\ntop functions by self time`);
+	printRows(functionRows("self"), [4, 5]);
+	console.log("\ntop functions by total time");
+	printRows(functionRows("total"), [4, 5]);
+	console.log("\nself time per file");
+	const fileRows = [["self ms", "self", "file"]];
+	for (const [file, self] of [...files].sort((a, b) => b[1] - a[1]).slice(0, limit)) {
+		fileRows.push([ms(self), share(self), file]);
+	}
+	printRows(fileRows, [2]);
+}
+
+async function profile ({name, schema, buildName, warmupMs, durationMs, outFile}) {
+	if (!builds[buildName]) {
+		throw new Error(`Unknown build "${buildName}", use current or baseline`);
+	}
+	const suites = await setup();
+	const suite = suites.find((suite) => suite.schema === schema && suite.operation === name);
+	if (!suite) {
+		const known = [...new Set(suites.map((suite) => `${suite.operation} ${suite.schema}`))];
+		throw new Error(`Unknown operation "${name}" on schema "${schema}". Known:\n${known.join("\n")}`);
+	}
+
+	// The warm-up also sizes the run, so that all inputs exist before the profiler starts.
+	const opsPerSecond = await measure(suite, buildName, warmupMs);
+	const state = stateFor(suite, buildName);
+	const inputs = Array.from({"length": Math.max(1, Math.ceil(opsPerSecond * durationMs / 1000))}, () => suite.steps.prepare(state));
+	global.gc();
+
+	const session = new inspector.Session();
+	session.connect();
+	const post = promisify(session.post.bind(session));
+	await post("Profiler.enable");
+	await post("Profiler.setSamplingInterval", {"interval": 100});
+	await post("Profiler.start");
+	for (const input of inputs) {
+		await suite.steps.run(state, input);
+	}
+	const {"profile": cpuProfile} = await post("Profiler.stop");
+	session.disconnect();
+
+	fs.writeFileSync(outFile, JSON.stringify(cpuProfile));
+	console.log(`${name} on ${schema}, ${buildName} build ${builds[buildName].version}, ${inputs.length} calls, profile written to ${outFile}`);
+	printProfile(analyzeProfile(cpuProfile), 25);
 }
 
 async function main (args) {
@@ -489,14 +679,33 @@ async function main (args) {
 		throw new Error("Run with node --expose-gc");
 	}
 	const quick = args.includes("--quick");
+	const option = (flag) => args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined;
+	const profileIndex = args.indexOf("--profile");
+	if (profileIndex !== -1) {
+		const [name, schema] = args.slice(profileIndex + 1, profileIndex + 3);
+		const buildName = option("--build") || "current";
+		await profile({
+			name,
+			schema,
+			buildName,
+			"warmupMs": quick ? 50 : 1000,
+			"durationMs": quick ? 300 : 5000,
+			"outFile": option("--out") || `${buildName}-${schema}-${name}.cpuprofile`
+		});
+		return;
+	}
 	const jsonIndex = args.indexOf("--json");
 	const settings = quick ? {"rounds": 2, "roundMs": 20, "warmupMs": 20} : {"rounds": 10, "roundMs": 200, "warmupMs": 500};
 
 	console.log(`baseline ${builds.baseline.version} vs current ${builds.current.version} (dist), node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
-	const results = await run(settings);
-	printTable(results);
+	const all = await run(settings);
+	const results = all.filter((result) => result.kind === "operation");
+	const stageResults = all.filter((result) => result.kind === "stage");
+	printTable(results, "operation");
+	console.log("\nstages (report only)");
+	printTable(stageResults, "stage");
 	if (jsonIndex !== -1) {
-		const output = {"node": process.version, "builds": {"baseline": builds.baseline.version, "current": builds.current.version}, ...settings, results};
+		const output = {"node": process.version, "builds": {"baseline": builds.baseline.version, "current": builds.current.version}, ...settings, results, "stages": stageResults};
 		fs.writeFileSync(args[jsonIndex + 1], JSON.stringify(output, null, "\t"));
 	}
 }

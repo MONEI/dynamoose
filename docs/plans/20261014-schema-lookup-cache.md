@@ -175,16 +175,18 @@ Benchmark (`packages/dynamoose/benchmarks/benchmark.js`):
 **Files:**
 - Modify: `packages/dynamoose/benchmarks/benchmark.js`
 - Modify: `packages/dynamoose/benchmarks/smoke.test.js`
+- ➕ Modify: `packages/dynamoose/benchmarks/README.md` (stages and profile mode)
+- ➕ Modify: `.gitignore` (`*.cpuprofile`)
 
-- [ ] `--profile <operation> <schema> [--build current|baseline]`: runs the operation under the V8 CPU
+- [x] `--profile <operation> <schema> [--build current|baseline]`: runs the operation under the V8 CPU
   profiler (`inspector` module), writes the `.cpuprofile` (opens in Chrome DevTools or speedscope)
-- [ ] print the top functions by self time and by total time, with file and line, and the share per
+- [x] print the top functions by self time and by total time, with file and line, and the share per
   dynamoose source file
-- [ ] report-only micro-benchmarks of the internal stages: `Schema.getAttributeValue`,
+- [x] report-only micro-benchmarks of the internal stages: `Schema.getAttributeValue`,
   `Schema.getAttributeTypeDetails`, `Schema.attributes()`, `Item.objectFromSchema` (toDynamo and
   fromDynamo), `Schema.getTypePaths`, the `save` conform pass (`conformToSchema` on a saved item)
-- [ ] extend the smoke test: profile mode produces a non-empty table and a `.cpuprofile` file
-- [ ] `npm run build`, smoke test, unit suite, lint - must pass before next task
+- [x] extend the smoke test: profile mode produces a non-empty table and a `.cpuprofile` file
+- [x] `npm run build`, smoke test, unit suite, lint - must pass before next task
 
 ### Task 3: Fixture of common's Checkout schema
 
