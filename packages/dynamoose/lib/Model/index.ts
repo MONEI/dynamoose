@@ -1015,16 +1015,29 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						}
 					}
 
-					if (subValue !== dynamooseUndefined) {
-						const defaultValue = await schema.defaultCheck(baseAttributeName, undefined, updateType.objectFromSchemaSettings);
+					// The default and required checks apply to the attribute this path writes. For a
+					// nested path that is the nested attribute, not the top-level parent, which stays
+					// on the item. A nested path the schema does not describe has nothing to check.
+					let checkAttributeName: string | undefined = baseAttributeName;
+					if (subKey !== baseAttributeName) {
+						checkAttributeName = subKey.replace(/\[(\d+)\]/gu, ".$1");
+						try {
+							schema.getAttributeValue(checkAttributeName);
+						} catch (e) {
+							checkAttributeName = undefined;
+						}
+					}
+
+					if (subValue !== dynamooseUndefined && checkAttributeName) {
+						const defaultValue = await schema.defaultCheck(checkAttributeName, undefined, updateType.objectFromSchemaSettings);
 						if (defaultValue) {
 							subValue = defaultValue;
 							updateType = updateTypesMap.get("$SET");
 						}
 					}
 
-					if (updateType.objectFromSchemaSettings.required === true) {
-						await schema.requiredCheck(baseAttributeName, undefined);
+					if (updateType.objectFromSchemaSettings.required === true && checkAttributeName) {
+						await schema.requiredCheck(checkAttributeName, undefined);
 					}
 
 					// Validate REMOVE operations for DynamoDB limitations

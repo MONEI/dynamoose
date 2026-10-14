@@ -3116,6 +3116,56 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should send correct params to updateItem with $REMOVE nested attribute under a required parent", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "required": true, "schema": {"companyName": String, "description": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["business.description"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0.#a1");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "business", "#a1": "description"});
+				});
+
+				it("Should throw error for $REMOVE of a required nested attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"companyName": {"type": String, "required": true}}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["business.companyName"]})).rejects.toThrow("business.companyName is a required property but has no value when trying to save item");
+				});
+
+				it("Should send correct params to updateItem with $REMOVE nested attribute under a parent with a default", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "default": {"companyName": "Default"}, "schema": {"companyName": String, "description": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["business.description"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0.#a1");
+					expect(updateItemParams.ExpressionAttributeValues).toBeUndefined();
+				});
+
+				it("Should send correct params to updateItem with $REMOVE nested attribute that has a default", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"companyName": {"type": String, "default": "Default"}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["business.companyName"]});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "Default"}});
+				});
+
+				it("Should send correct params to updateItem with $REMOVE of a list element in a required list", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "tags": {"type": Array, "required": true, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["tags[1]"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0[1]");
+				});
+
+				it("Should send correct params to updateItem with $REMOVE nested attribute the schema does not describe", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "required": true, "schema": {"companyName": String}}}, {"saveUnknown": true});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["business.extra.deep"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0.#a1.#a2");
+				});
+
 				it("Should send correct params to updateItem with multiple $REMOVE nested attributes", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"description": String}}, "user": {"type": Object, "schema": {"avatar": String}}});
