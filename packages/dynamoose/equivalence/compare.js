@@ -3,27 +3,20 @@
 // value or error of each step and whether it was a synchronous throw or a rejected promise, and the
 // state of every tracked object (caller inputs, Item instances) after each step.
 // Values are recorded as plain trees, so two builds (whose classes differ) compare with toStrictEqual.
-// Key order is recorded apart, as a list of [path, Object.keys(object)].
+// Key order is recorded per step, as a list of [path, Object.keys(object)].
+const {loadBuild, publishedBaselineDirectory, currentDirectory} = require("../benchmarks/builds");
 
-function loadBuild (name, root) {
-	return {
-		name,
-		"dynamoose": require(root),
-		"Item": require(`${root}/dist/Item`).Item,
-		"internalProperties": require(`${root}/dist/Internal`).default.General.internalProperties
-	};
-}
-
+// Always the published release: the BASELINE variable of the benchmark does not apply here.
 const builds = {
-	"baseline": loadBuild("baseline", "dynamoose-baseline"),
-	"current": loadBuild("current", "..")
+	"baseline": loadBuild(publishedBaselineDirectory),
+	"current": loadBuild(currentDirectory)
 };
 
 // The methods `lib/aws/ddb/internal.ts` calls on the client.
 const ddbMethods = ["describeTable", "createTable", "updateTable", "updateTimeToLive", "describeTimeToLive", "listTagsOfResource", "tagResource", "untagResource", "getItem", "deleteItem", "updateItem", "putItem", "batchWriteItem", "batchGetItem", "query", "scan", "transactGetItems", "transactWriteItems"];
 
 // Deep copy that keeps Date, Set, Map, Buffer and typed array instances, so each build gets the same
-// input without sharing (and mutating) the other build's objects.
+// input without sharing (and mutating) the other build's objects. Other non-plain objects throw.
 function clone (value) {
 	if (Buffer.isBuffer(value)) {
 		return Buffer.from(value);
@@ -43,7 +36,11 @@ function clone (value) {
 	if (Array.isArray(value)) {
 		return value.map(clone);
 	}
-	if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+	if (value && typeof value === "object") {
+		// Any other object would be shared by both builds, so a change one build makes would reach the other.
+		if (Object.getPrototypeOf(value) !== Object.prototype) {
+			throw new Error(`clone cannot copy a ${className(value)} object`);
+		}
 		return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clone(entry)]));
 	}
 	return value;
@@ -198,6 +195,7 @@ async function runCase (build, testCase, fixtures) {
 				record.events = events;
 				events = [];
 				record.tracked = tracked.map(([name, value]) => [name, snapshot(value, `${label}: ${name}`)]);
+				record.keyOrder = keyOrder.splice(0);
 				steps.push(record);
 			};
 			let result;
@@ -238,7 +236,7 @@ async function runCase (build, testCase, fixtures) {
 		dynamoose.Table.defaults.set({});
 		dynamoose.aws.ddb.revert();
 	}
-	return {steps, keyOrder};
+	return {steps};
 }
 
 module.exports = {builds, clone, runCase};

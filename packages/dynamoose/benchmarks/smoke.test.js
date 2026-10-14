@@ -2,15 +2,21 @@ const {execFileSync} = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const {publishedBaselineDirectory} = require("./builds");
+
+const benchmark = path.join(__dirname, "benchmark.js");
 
 describe("benchmark --quick", () => {
+	let directory;
 	let output;
 	beforeAll(() => {
-		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-benchmark-"));
+		directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-benchmark-"));
 		const jsonFile = path.join(directory, "results.json");
-		execFileSync(process.execPath, ["--expose-gc", path.join(__dirname, "benchmark.js"), "--quick", "--json", jsonFile], {"stdio": "pipe"});
+		execFileSync(process.execPath, ["--expose-gc", benchmark, "--quick", "--json", jsonFile], {"stdio": "pipe"});
 		output = JSON.parse(fs.readFileSync(jsonFile, "utf8"));
-		fs.rmSync(directory, {"recursive": true});
+	});
+	afterAll(() => {
+		fs.rmSync(directory, {"recursive": true, "force": true});
 	});
 
 	// A dropped operation or an operation that never ran would make a comparison silently incomplete.
@@ -65,10 +71,10 @@ describe("benchmark --profile", () => {
 	beforeAll(() => {
 		directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-profile-"));
 		profileFile = path.join(directory, "update.cpuprofile");
-		stdout = execFileSync(process.execPath, ["--expose-gc", path.join(__dirname, "benchmark.js"), "--profile", "update", "large", "--quick", "--out", profileFile], {"encoding": "utf8"});
+		stdout = execFileSync(process.execPath, ["--expose-gc", benchmark, "--profile", "update", "large", "--quick", "--out", profileFile], {"encoding": "utf8"});
 	});
 	afterAll(() => {
-		fs.rmSync(directory, {"recursive": true});
+		fs.rmSync(directory, {"recursive": true, "force": true});
 	});
 
 	it("writes a CPU profile with samples", () => {
@@ -87,16 +93,47 @@ describe("benchmark --profile", () => {
 	});
 });
 
-// The CI gate runs this mode; two quick rounds can never reach significance, so it must pass.
+// The CI gate runs this mode.
 describe("benchmark --gate", () => {
+	const gate = (args, env) => execFileSync(process.execPath, ["--expose-gc", benchmark, "--gate", ...args], {"encoding": "utf8", "stdio": "pipe", "env": {...process.env, "BASELINE": publishedBaselineDirectory, ...env}});
+
+	// Two quick rounds can never reach significance, so it must pass.
 	it("gates create, get and update on large and checkout, the rest report only", () => {
-		const stdout = execFileSync(process.execPath, ["--expose-gc", path.join(__dirname, "benchmark.js"), "--gate", "--quick"], {"encoding": "utf8"});
+		const stdout = gate(["--quick"]);
 		const table = (title) => stdout.split(`${title}\n`)[1].split("\n\n")[0].trimEnd().split("\n").slice(1).map((line) => line.split(/ +/u).slice(0, 2).join(" "));
 		expect(table("confirmed by a second run")).toEqual(["large create", "large get", "large update", "checkout create", "checkout get", "checkout update"]);
 		expect(table("operations (report only)")).toEqual(["large create-request", "large update-nested", "checkout create-request", "checkout update-nested"]);
 		const stages = ["getAttributeValue", "getAttributeTypeDetails", "attributes", "getTypePaths", "objectFromSchema-toDynamo", "objectFromSchema-fromDynamo", "save-conform"];
 		expect(table("stages (report only)")).toEqual(["large", "checkout"].flatMap((schema) => stages.map((stage) => `${schema} ${stage}`)));
 		expect(stdout).not.toMatch(/SLOWER/u);
+	});
+
+	// Without BASELINE the gate would silently compare with the published release, not the base branch.
+	it("refuses to run without BASELINE", () => {
+		expect(() => gate(["--quick"], {"BASELINE": ""})).toThrow(/--gate needs BASELINE/u);
+	});
+
+	// The current build's samples scaled to a tenth make every gated row much slower, in every round.
+	it("fails, re-runs and writes profiles and comparisons for a confirmed slowdown", () => {
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-gate-"));
+		try {
+			let failure;
+			try {
+				gate(["--quick", "--rounds", "8", "--artifacts", directory], {"BENCHMARK_SCALE_CURRENT": "0.1"});
+			} catch (error) {
+				failure = error;
+			}
+			expect(failure.status).toEqual(1);
+			expect(failure.stdout).toMatch(/slower, running again to confirm/u);
+			expect(failure.stdout).toMatch(/confirmed slowdown: create on large/u);
+			const files = fs.readdirSync(directory);
+			for (const name of ["baseline-large-create.cpuprofile", "baseline-large-create.txt", "current-large-create.cpuprofile", "current-large-create.txt", "large-create-comparison.txt"]) {
+				expect(files).toContain(name);
+			}
+			expect(fs.readFileSync(path.join(directory, "large-create-comparison.txt"), "utf8")).toMatch(/^self time per call, largest growth first\n/u);
+		} finally {
+			fs.rmSync(directory, {"recursive": true, "force": true});
+		}
 	});
 });
 
@@ -105,10 +142,13 @@ describe("benchmark --gate", () => {
 describe("benchmark EXTRA_SCHEMA", () => {
 	it("runs an operation on the extra schema", () => {
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-extra-"));
-		const moduleFile = path.join(directory, "extra.js");
-		fs.writeFileSync(moduleFile, `module.exports = {...require(${JSON.stringify(path.join(__dirname, "fixtures", "checkout-schema.js"))}), "name": "extra"};`);
-		const stdout = execFileSync(process.execPath, ["--expose-gc", path.join(__dirname, "benchmark.js"), "--profile", "create-request", "extra", "--quick", "--out", path.join(directory, "extra.cpuprofile")], {"encoding": "utf8", "env": {...process.env, "EXTRA_SCHEMA": moduleFile}});
-		fs.rmSync(directory, {"recursive": true});
-		expect(stdout).toMatch(/^create-request on extra, current build /);
+		try {
+			const moduleFile = path.join(directory, "extra.js");
+			fs.writeFileSync(moduleFile, `module.exports = {...require(${JSON.stringify(path.join(__dirname, "fixtures", "checkout-schema.js"))}), "name": "extra"};`);
+			const stdout = execFileSync(process.execPath, ["--expose-gc", benchmark, "--profile", "create-request", "extra", "--quick", "--out", path.join(directory, "extra.cpuprofile")], {"encoding": "utf8", "env": {...process.env, "EXTRA_SCHEMA": moduleFile}});
+			expect(stdout).toMatch(/^create-request on extra, current build /);
+		} finally {
+			fs.rmSync(directory, {"recursive": true, "force": true});
+		}
 	});
 });

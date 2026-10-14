@@ -1,6 +1,6 @@
 import CustomError from "../Error";
 import ModelStore from "../ModelStore";
-import {Schema, SchemaDefinition, DynamoDBSetTypeResult, ValueType, IndexItem, TableIndex} from "../Schema";
+import {Schema, SchemaDefinition, DynamoDBSetTypeResult, ValueType, IndexItem, TableIndex, getSharedAttributeTypeDetails} from "../Schema";
 import {Item as ItemCarrier, ItemSaveSettings, ItemSettings, ItemObjectFromSchemaSettings, AnyItem} from "../Item";
 import utils from "../utils";
 import ddb from "../aws/ddb/internal";
@@ -1184,7 +1184,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			// Single pass through schema attributes to find and process combine types
 			const combineAttributes = [];
 			for (const attribute of schemaAttributes) {
-				const type = schema.getAttributeTypeDetails(attribute);
+				const type = getSharedAttributeTypeDetails(schema, attribute);
 				const isCombineType = Array.isArray(type) ? type.some((t) => t.name === "Combine") : type.name === "Combine";
 
 				if (isCombineType) {

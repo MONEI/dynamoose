@@ -8,17 +8,15 @@ describe("Schema lookup cache", () => {
 	const lookupCache = (schema) => schema.getInternalProperties(internalProperties).lookupCache;
 	const model = (name, schema, options = {}) => dynamoose.model(name, schema, {"create": false, "waitForActive": false, ...options});
 
-	it("Should return the same type details object on a second lookup", () => {
-		const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": {"city": String}}});
-		const first = schema.getAttributeTypeDetails("address.city");
-		expect(first.name).toEqual("String");
-		expect(schema.getAttributeTypeDetails("address.city")).toBe(first);
-	});
-
-	it("Should return the same attribute definition for paths with different list indexes", () => {
+	// A key per list index would grow the cache with the length of every list an item holds.
+	it("Should keep one entry for paths that differ only in list indexes", () => {
 		const schema = new dynamoose.Schema({"id": String, "lines": {"type": Array, "schema": [{"type": Object, "schema": {"sku": String}}]}});
-		expect(schema.getAttributeValue("lines.3.sku")).toBe(schema.getAttributeValue("lines.0.sku"));
-		expect(schema.getAttributeTypeDetails("lines.7.sku")).toBe(schema.getAttributeTypeDetails("lines.0.sku"));
+		const before = lookupCache(schema).values.size;
+		schema.getAttributeValue("lines.3.sku");
+		schema.getAttributeValue("lines.7.sku");
+		schema.getAttributeTypeDetails("lines.9.sku");
+		expect(lookupCache(schema).values.size - before).toBeLessThanOrEqual(1);
+		expect(lookupCache(schema).values.has("lines.3.sku")).toEqual(false);
 	});
 
 	// attributes() returned a new array on every call before the cache; a caller that changes the
@@ -97,9 +95,10 @@ describe("Schema lookup cache", () => {
 	});
 
 	// Keys allowed by saveUnknown come from outside input; caching misses would grow without bound.
+	// The inherited-key test below guards the own-property check; this one guards misses and throws.
 	it("Should add no entry for a miss or a thrown error", () => {
 		const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": {"city": String}}}, {"saveUnknown": true});
-		const sizes = () => [lookupCache(schema)?.values?.size ?? 0, lookupCache(schema)?.typeDetails?.size ?? 0];
+		const sizes = () => lookupCache(schema)?.values?.size ?? 0;
 		const before = sizes();
 
 		expect(schema.getAttributeValue("unknown")).toBeUndefined();
@@ -154,7 +153,6 @@ describe("Schema lookup cache", () => {
 			value.getAttributeTypeDetails("constructor");
 			expect(lookupCache(value)?.values?.has("constructor") ?? false).toEqual(false);
 			expect(lookupCache(value)?.values?.has("address.toString") ?? false).toEqual(false);
-			expect(lookupCache(value)?.typeDetails?.has("constructor") ?? false).toEqual(false);
 		});
 
 		it("Should resolve an attribute named constructor that the schema defines", () => {
@@ -163,5 +161,20 @@ describe("Schema lookup cache", () => {
 			expect(value.getAttributeTypeDetails("constructor").name).toEqual("Number");
 			expect(value.getAttributeTypeDetails("constructor").name).toEqual("Number");
 		});
+	});
+
+	// Accepted, documented difference from 4.2.4 (PENDING_CHANGELOG.md, CLAUDE.md): the constructor copies
+	// only the top level of the definition, so nested definition objects stay shared with the caller. 4.2.4
+	// sees a nested definition the caller adds or replaces after the constructor; the cache does not.
+	// If this test fails, the difference is gone: update the changelog and CLAUDE.md.
+	it("Should not see a nested definition replaced after the constructor (accepted difference)", () => {
+		const definition = {"id": String, "address": {"type": Object, "schema": {"city": String}}};
+		const schema = new dynamoose.Schema(definition);
+		expect(schema.getAttributeType("address.city")).toEqual("S");
+		definition.address.schema.city = Number;
+		definition.address.schema.zip = String;
+
+		expect(schema.getAttributeType("address.city")).toEqual("S"); // 4.2.4: "N"
+		expect(schema.attributes()).toEqual(["id", "address", "address.city"]); // 4.2.4: also "address.zip"
 	});
 });

@@ -1,4 +1,4 @@
-const {gateVerdict} = require("./benchmark");
+const {gateVerdict} = require("./gate");
 
 // Samples are ops/s per round. The gate must fail a real slowdown and pass runner noise.
 describe("gateVerdict", () => {
@@ -12,7 +12,16 @@ describe("gateVerdict", () => {
 		expect(gateVerdict([100, 60, 140, 100, 60, 140, 100, 60, 140, 100], [80, 140, 60, 80, 140, 60, 80, 140, 60, 80]).slower).toBe(false);
 	});
 
-	it("passes a significant slowdown of 15% or less", () => {
-		expect(gateVerdict(baseline, [90, 91, 89, 92, 88, 90, 91, 89, 90, 90]).slower).toBe(false);
+	// p is about 0.03: a gate with alpha loosened toward 0.1 would fail this row.
+	it("passes a 20% median slowdown that is not significant at p < 0.01", () => {
+		const result = gateVerdict(baseline, [80, 80, 80, 80, 80, 80, 102, 101, 99, 100]);
+		expect(result.p).toBeGreaterThan(0.01);
+		expect(result.slower).toBe(false);
+	});
+
+	it("passes a significant slowdown of exactly 15%", () => {
+		const result = gateVerdict(baseline, [85, 85, 85, 85, 85, 85, 85, 85, 85, 85]);
+		expect(result.p).toBeLessThan(0.01);
+		expect(result.slower).toBe(false);
 	});
 });

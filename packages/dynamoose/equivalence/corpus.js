@@ -2,9 +2,10 @@
 // make its own Schema and Model instances from `ctx.dynamoose`, wrap every user function with
 // `ctx.fn`, track the caller's inputs and Items with `ctx.track`, and put each call in `ctx.step`.
 // `failing` lists the steps that fail on the published build, so a case cannot pass by comparing two
-// identical errors that nobody meant to test. Step labels are unique per case.
+// identical errors that nobody meant to test. `differs: {reason, steps}` lists the steps of a deliberate
+// behaviour change (see test/Equivalence.js). Step labels are unique per case.
 const {clone} = require("./compare");
-const {"schemas": benchmarkSchemas} = require("../benchmarks/benchmark");
+const {"schemas": benchmarkSchemas} = require("../benchmarks/schemas");
 
 const answer = (value) => () => clone(value);
 
@@ -20,7 +21,7 @@ async function update (ctx, Model, label, key, object, settings) {
 	return ctx.step(label, () => Model.update(ctx.track(`${label} key`, key), ctx.track(`${label} input`, object), settings));
 }
 
-// Create, save, get, query and update on a benchmark schema (benchmarks/benchmark.js).
+// Create, save, get, query and update on a benchmark schema (benchmarks/schemas.js).
 function operationsCase (schemaName) {
 	const config = benchmarkSchemas[schemaName];
 	return {
@@ -669,6 +670,109 @@ const edgeCases = [
 			ctx.respond("putItem", () => Promise.reject(Object.assign(new Error("The conditional request failed"), {"name": "ConditionalCheckFailedException"})));
 			await ctx.step("save rejected by DynamoDB", () => new Model({"id": "4"}).save());
 			await ctx.step("save after rejection", () => new Model({"id": "5"}).save({"return": "request"}));
+		}
+	},
+	{
+		// The Set branch of getAttributeTypeDetails reads the schema setting, which calls a function-valued
+		// schema on every lookup. The function answers differently on each call.
+		"name": "function-valued Set schema",
+		// Which type the codes schema gives depends on how many calls came before.
+		"failing": ["save codes"],
+		"run": async (ctx) => {
+			let calls = 0;
+			const Model = ctx.model("Model", new ctx.dynamoose.Schema({
+				"id": String,
+				"tags": {"type": Set, "schema": ctx.fn("schema tags", () => [String])},
+				"codes": {"type": Set, "schema": ctx.fn("schema codes", () => calls++ % 2 ? [Number] : [String])}
+			}));
+			ctx.respond("updateItem", answer({}));
+			await save(ctx, Model, "save request", {"id": "1", "tags": new Set(["a"])}, {"return": "request"});
+			await save(ctx, Model, "save codes", {"id": "3", "codes": new Set(["x"])}, {"return": "request"});
+			await save(ctx, Model, "save", {"id": "2", "tags": ["b"]});
+			await update(ctx, Model, "update", {"id": "1"}, {"tags": new Set(["c"])});
+			ctx.respond("getItem", answer({"Item": {"id": {"S": "1"}, "tags": {"SS": ["a"]}, "codes": {"SS": ["x"]}}}));
+			await ctx.step("get", () => Model.get("1"));
+		}
+	},
+	{
+		"name": "populate",
+		"run": async (ctx) => {
+			const User = ctx.model("User", {"id": Number, "name": String});
+			const Game = ctx.model("Game", {"id": Number, "name": String, "owner": User});
+			ctx.respond("getItem", (params) => Promise.resolve(params.TableName === ctx.name("User") ? {"Item": {"id": {"N": "2"}, "name": {"S": "owner"}}} : {"Item": {"id": {"N": "1"}, "name": {"S": "game"}, "owner": {"N": "2"}}}));
+			const game = await ctx.step("get", () => Game.get(1));
+			ctx.track("game", game);
+			await ctx.step("populate", () => game.populate());
+		}
+	},
+	{
+		"name": "create table request with indexes",
+		"run": async (ctx) => {
+			const Model = ctx.model("Model", new ctx.dynamoose.Schema({
+				"id": String,
+				"sk": {"type": String, "rangeKey": true},
+				"email": {"type": String, "index": {"type": "global", "name": "emailIndex", "rangeKey": "createdAt"}},
+				"createdAt": {"type": Number, "index": {"type": "local", "name": "createdIndex"}},
+				"profile": {"type": Object, "schema": {"city": String}}
+			}));
+			await ctx.step("create table request", () => Model.table().create({"return": "request"}));
+		}
+	},
+	{
+		// The public Schema methods called directly, in a sequence that reuses paths: the cache must not
+		// change any result, and a caller that changes a returned value must not change the next result.
+		"name": "Schema methods called directly",
+		"failing": ["type details of a path into an array of definitions with a map that misses it", "type details of a list index path"],
+		"run": async (ctx) => {
+			const {Schema} = ctx.dynamoose;
+			const schema = new Schema({
+				"id": String,
+				"ttl": String,
+				"address": {"type": Object, "schema": {"city": String, "zip": {"type": [String, Number]}}},
+				"when": {"type": {"value": Date, "settings": {"storage": "iso"}}},
+				"tags": {"type": Set, "schema": [String]},
+				"data": [
+					{"type": Object, "schema": {"a": String}},
+					{"type": Object, "schema": {"b": Number}}
+				]
+			}, {"saveUnknown": true});
+			const attributes = await ctx.step("attributes", () => schema.attributes());
+			await ctx.step("change the returned attributes", () => attributes.push("changed"));
+			await ctx.step("attributes again", () => schema.attributes());
+			for (const path of ["address.city", "address.zip", "when", "tags", "data", "data.b", "constructor", "address.toString"]) {
+				await ctx.step(`value of ${path}`, () => schema.getAttributeValue(path));
+				await ctx.step(`value of ${path} again`, () => schema.getAttributeValue(path));
+			}
+			await ctx.step("value of data.b with a map", () => schema.getAttributeValue("data.b", {"typeIndexOptionMap": {"data": 1}}));
+			await ctx.step("value of data.b with a map that misses it", () => schema.getAttributeValue("data.b", {"typeIndexOptionMap": {"data": 0}}));
+			await ctx.step("value of data.b without a map after a map", () => schema.getAttributeValue("data.b"));
+			await ctx.step("type details of data.b", () => schema.getAttributeTypeDetails("data.b"));
+			await ctx.step("type details of a path into an array of definitions with a map that misses it", () => schema.getAttributeTypeDetails("data.b", {"typeIndexOptionMap": {"data": 0}}));
+			for (const path of ["address.city", "address.zip", "when", "tags", "ttl"]) {
+				const details = await ctx.step(`type details of ${path}`, () => schema.getAttributeTypeDetails(path));
+				await ctx.step(`change the type details of ${path}`, () => {
+					for (const entry of Array.isArray(details) ? details : [details]) {
+						entry.name = "Changed";
+						entry.dynamodbType = "N";
+						entry.typeSettings.changed = true;
+						if (entry.set) {
+							entry.set.name = "Changed Set";
+						}
+						if (entry.customType) {
+							entry.customType.functions.toDynamo = () => "changed";
+						}
+					}
+				});
+				await ctx.step(`type details of ${path} again`, () => schema.getAttributeTypeDetails(path));
+				await ctx.step(`type of ${path}`, () => schema.getAttributeType(path));
+			}
+			await ctx.step("type details of a list index path", () => schema.getAttributeTypeDetails("tags.3", {"standardKey": true}));
+			// The table writes a Date ttl attribute over the declared String one.
+			new ctx.dynamoose.Table(ctx.name("Table"), [ctx.model("Model", schema)], {"expires": 1000, "initialize": false});
+			await ctx.step("attributes after the ttl write", () => schema.attributes());
+			await ctx.step("value of ttl after the ttl write", () => schema.getAttributeValue("ttl"));
+			await ctx.step("type details of ttl after the ttl write", () => schema.getAttributeTypeDetails("ttl"));
+			await ctx.step("type of ttl after the ttl write", () => schema.getAttributeType("ttl"));
 		}
 	}
 ];

@@ -1,6 +1,7 @@
 // Runs every case of equivalence/corpus.js through the published build (dynamoose-baseline) and the
 // current dist in the same process, and fails on any observable difference. Nothing is recorded to
 // disk: the baseline is the published package.
+const fs = require("fs");
 const {builds, runCase} = require("../equivalence/compare");
 const corpus = require("../equivalence/corpus");
 
@@ -14,6 +15,12 @@ describe("Equivalence with dynamoose-baseline", () => {
 	});
 	afterEach(() => {
 		jest.useRealTimers();
+	});
+
+	it("Should compare the published release with this build", () => {
+		const {devDependencies} = require("../package.json");
+		expect(fs.realpathSync(builds.baseline.directory)).not.toEqual(fs.realpathSync(builds.current.directory));
+		expect(`npm:@monei-js/dynamoose@${builds.baseline.version}`).toEqual(devDependencies["dynamoose-baseline"]);
 	});
 
 	it("Should have unique case names", () => {
@@ -41,7 +48,18 @@ describe("Equivalence with dynamoose-baseline", () => {
 			}
 		}
 
-		expect(current.steps).toStrictEqual(baseline.steps);
-		expect(current.keyOrder).toStrictEqual(baseline.keyOrder);
+		// A deliberate behaviour change lists its steps in `differs` (with a reason) until the
+		// dynamoose-baseline alias moves to a release that has the change; then the steps match and
+		// this fails, so the entry is removed.
+		const differs = testCase.differs ? testCase.differs.steps : [];
+		if (testCase.differs) {
+			expect(testCase.differs.reason).toEqual(expect.stringMatching(/\S/u));
+		}
+		for (const label of differs) {
+			const step = (result) => result.steps.find((entry) => entry.label === label);
+			expect([label, step(current)]).not.toStrictEqual([label, step(baseline)]);
+		}
+		const compared = (result) => result.steps.filter((entry) => !differs.includes(entry.label));
+		expect(compared(current)).toStrictEqual(compared(baseline));
 	});
 });

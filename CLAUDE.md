@@ -42,11 +42,11 @@ cd packages/dynamoose && npm run build && npm run test:integration   # DYNAMODB_
 
 **Benchmarking (in packages/dynamoose, after `npm run build`):**
 ```bash
-npm run benchmark                              # Current dist vs dynamoose-baseline, full run (about 4 min)
+npm run benchmark                              # Current dist vs dynamoose-baseline, full run (5 minutes or more)
 npm run benchmark -- --quick                   # Short rounds, noisy numbers
 npm run benchmark -- --profile update large    # CPU profile of one operation or stage
-npm run benchmark:smoke                        # jest: every mode still runs
-EXTRA_SCHEMA=path/to/module.js npm run benchmark   # Add one schema, e.g. common's live Checkout schema
+npm run benchmark:smoke                        # jest: the modes still run, the gate verdict and failure path
+EXTRA_SCHEMA=path/to/module.js npm run benchmark   # Add one schema (a module common's live schema needs node --import tsx, see the README)
 ```
 
 See "Performance work" below and `packages/dynamoose/benchmarks/README.md` for details.
@@ -154,34 +154,42 @@ The Schema system supports:
 
 - Benchmark: `benchmarks/benchmark.js` loads the current `dist` and `dynamoose-baseline` in one process and
   interleaves rounds. A stub DynamoDB client gives canned responses, so the numbers have no network time.
-  It measures operations (create, get, update, nested update) and report-only internal stages
-  (`getAttributeValue`, `getAttributeTypeDetails`, `attributes`, `getTypePaths`, `objectFromSchema`, save
-  conform). `BASELINE=<package dir>` compares against another build.
-- Run the numbers under plain `node`, not `tsx`. tsx hooks every `require`, and `Item.ts` calls
-  `require("./Schema")` inline per value, so tsx skews the operation numbers. `EXTRA_SCHEMA` with
-  `node --import tsx` (from a checkout of common) is for a live schema check only.
-- CI gate: job `benchmark-gate` in `.github/workflows/ci.yml`, pull requests only. It builds the PR and its
-  base and runs `npm run benchmark -- --gate`. Only `create`, `get` and `update` on the large and checkout
-  schemas can fail it. A row fails when the median is more than 15% slower AND a one-sided Mann-Whitney U
-  test gives p < 0.01. A failed row runs once more; a second failure profiles both builds and uploads the
-  `benchmark-gate` artifact. Runner speed differs about 2x between runs: compare only numbers from the same
-  process.
+  It measures operations (create, create-request, get, update, nested update) and report-only internal
+  stages. Run the numbers under plain `node`, not `tsx`: tsx hooks every `require`, and `Item.ts` calls
+  `require("./Schema")` inline per value. Details, the CI gate (`--gate`, job `benchmark-gate`) and its
+  limits are in `packages/dynamoose/benchmarks/README.md`.
 - Equivalence suite: `test/Equivalence.js` (cases in `equivalence/corpus.js`, harness in
   `equivalence/compare.js`) runs every case on the current build and on `dynamoose-baseline` (an npm alias
   of the published `@monei-js/dynamoose`) and compares requests, results, errors, mutations and user
-  function calls. A failure is a bug in the change. Never edit a case or the baseline to make it pass.
-  Bump the alias to the new version after each release.
-- Schema lookup cache (`lib/Schema.ts`): `getAttributeValue`, `getAttributeTypeDetails` and `attributes()`
-  without arguments are cached per Schema, keyed by the normalized path.
+  function calls. A failure is a bug in the change. Never edit a case or the baseline to make it pass. A
+  deliberate behaviour change lists the steps it changes in the case's `differs` with a `reason`; the
+  suite then checks that they differ. Bump the alias to the new version after each release and remove the
+  `differs` entries the release contains.
+- Schema lookup cache (`lib/Schema.ts`): `getAttributeValue` and `attributes()` without arguments are
+  cached per Schema, keyed by the normalized path. The public `getAttributeTypeDetails` is not cached: each
+  call builds a new result, as 4.2.4 does, so a caller can change it without changing the next result.
+  Code in `lib/` calls `getSharedAttributeTypeDetails` instead, which shares one cached result per path:
+  it must only read that result, never write into it.
   - The only write to a schema after its constructor is the `ttl` attribute in `lib/Table/index.ts`. It
     calls `clearSchemaLookupCaches()`, which drops the cache of every schema (nested schemas share objects).
     A new post-construction write must call it too.
-  - Misses, thrown errors and keys only inherited from a prototype (`constructor`, `__proto__`) are never
-    cached, so `saveUnknown` input cannot grow the cache.
-  - Cached values are not copied or frozen: callers get the same schema references as before. Only
-    `attributes()` returns a new copy per call.
-  - A path that reaches an array of attribute definitions is not served from the cache when a
-    `typeIndexOptionMap` is passed, because the result depends on the item.
+  - Misses, thrown errors, keys only inherited from a prototype (`constructor`, `__proto__`) and paths
+    through an array of attribute definitions (they depend on the `typeIndexOptionMap`) are never cached,
+    so `saveUnknown` input cannot grow the cache.
+  - Cached attribute definitions are the schema's own objects, not copies. `attributes()` returns a new
+    copy per call.
+  - `attributes()` and the shared type details are not cached when computing them called a
+    function-valued setting (a Set's `schema` function): that function is called on every lookup, as in
+    4.2.4.
+  - Accepted difference from 4.2.4: the constructor copies only the top level of the definition, so every
+    object below it (each attribute's definition object, each nested `schema`) stays the caller's. A
+    nested definition that the caller adds, removes or replaces after the constructor is not seen by
+    `getAttributeValue` and the lookups built on it, and `attributes()` sees no change to these objects
+    after its first call. A getter on such an object that the path walk reads (`schema`) runs on the first
+    lookup only. `test/SchemaCache.js` pins the difference.
+- Known bug, not fixed: `Model.update`'s `attributeTypeCache` makes the request for an undeclared
+  `saveUnknown` attribute depend on the first update on the model. `test/AttributeTypeCache.js` pins it
+  with `it.failing`; plan `docs/plans/20261014-schema-lookup-cache.md`, Task 8.
 
 **Monorepo Management:**
 - Lerna handles package dependencies and publishing

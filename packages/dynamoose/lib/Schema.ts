@@ -826,17 +826,18 @@ export interface SchemaGetAttributeSettingValue {
 	typeIndexOptionMap?: any;
 }
 
-interface SchemaLookupEntry<T> {
-	value: T;
-	// The path walk met an array of attribute definitions, the only place a typeIndexOptionMap is read.
-	reachedDefinitionArray: boolean;
-}
+type AttributeTypeDetails = DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[];
 interface SchemaLookupCache {
 	epoch: number;
-	values: Map<string, SchemaLookupEntry<AttributeDefinition>>;
-	typeDetails: Map<string, SchemaLookupEntry<DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[]>>;
+	values: Map<string, AttributeDefinition>;
+	// Only for dynamoose's own callers, see getSharedAttributeTypeDetails.
+	typeDetails: Map<string, AttributeTypeDetails>;
 	attributes?: string[];
 }
+// Counts the calls getAttributeSettingValue makes to a function-valued setting (for example a Set's
+// `schema`). attributes() and the shared type details are cached only when computing them made no such
+// call, so the function keeps being called on every lookup.
+let settingFunctionCalls = 0;
 
 interface SchemaInternalProperties {
 	schemaObject: SchemaDefinition;
@@ -1361,7 +1362,7 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 	}
 	getAttributeType (key: string, value?: ValueType, settings?: SchemaGetAttributeTypeSettings): string | string[] {
 		try {
-			const typeDetails = this.getAttributeTypeDetails(key);
+			const typeDetails = getSharedAttributeTypeDetails(this, key);
 			return Array.isArray(typeDetails) ? (typeDetails as any).map((detail) => detail.dynamodbType) : typeDetails.dynamodbType;
 		} catch (e) {
 			if (settings?.unknownAttributeAllowed && e.message === `Invalid Attribute: ${key}` && value) {
@@ -1427,7 +1428,11 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 	getAttributeSettingValue (setting: string, key: string, settings: SchemaGetAttributeSettingValue = {"returnFunction": false}) {
 		function func (attributeValue): any {
 			const defaultPropertyValue = (attributeValue || {})[setting];
-			return typeof defaultPropertyValue === "function" && !settings.returnFunction ? defaultPropertyValue() : defaultPropertyValue;
+			if (typeof defaultPropertyValue === "function" && !settings.returnFunction) {
+				settingFunctionCalls++;
+				return defaultPropertyValue();
+			}
+			return defaultPropertyValue;
 		}
 		const attributeValue = this.getAttributeValue(key, {"typeIndexOptionMap": settings.typeIndexOptionMap});
 		if (Array.isArray(attributeValue)) {
@@ -1591,6 +1596,7 @@ interface SchemaAttributesMethodSettings {
 // is embedded by reference), so a write to one schema can change what another resolves. Bumping the
 // epoch drops the lookup cache of every schema.
 let lookupCacheEpoch = 0;
+/** @internal */
 export function clearSchemaLookupCaches (): void {
 	lookupCacheEpoch++;
 }
@@ -1653,8 +1659,9 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 		}, []);
 	};
 
+	const callsBefore = settingFunctionCalls;
 	const result = main(this.getInternalProperties(internalProperties).schemaObject);
-	if (cache) {
+	if (cache && settingFunctionCalls === callsBefore) {
 		cache.attributes = [...result];
 	}
 	return result;
@@ -1662,13 +1669,13 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 
 Schema.prototype.getAttributeValue = function (this: Schema, key: string, settings?: {standardKey?: boolean; typeIndexOptionMap?: {}}): AttributeDefinition {
 	const path = settings?.standardKey ? key : key.replace(/\.\d+/gu, ".0");
-	const hasTypeIndexOptionMap = Boolean(settings && settings.typeIndexOptionMap);
 	const cache = getLookupCache(this);
 	const cached = cache.values.get(path);
-	if (cached && !(cached.reachedDefinitionArray && hasTypeIndexOptionMap)) {
-		return cached.value;
+	if (cached !== undefined) {
+		return cached;
 	}
 
+	// A path through an array of attribute definitions depends on the typeIndexOptionMap, so it is never cached.
 	let reachedDefinitionArray = false;
 	// A key the attributes object only inherits (constructor, toString) is never cached: such keys come
 	// from saveUnknown input, and the cache holds only the schema's own attributes.
@@ -1700,8 +1707,8 @@ Schema.prototype.getAttributeValue = function (this: Schema, key: string, settin
 		}
 	}
 
-	if (isOwnPath && result !== undefined && !(reachedDefinitionArray && hasTypeIndexOptionMap)) {
-		cache.values.set(path, {"value": result, reachedDefinitionArray});
+	if (isOwnPath && result !== undefined && !reachedDefinitionArray) {
+		cache.values.set(path, result);
 	}
 	return result;
 };
@@ -1720,13 +1727,6 @@ function retrieveTypeInfo (type: string, isSet: boolean, key: string, typeSettin
 // TODO: using too many `as` statements in the function below. We should clean this up.
 Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, settings: {standardKey?: boolean; typeIndexOptionMap?: {}} = {}): DynamoDBTypeResult | DynamoDBSetTypeResult | DynamoDBTypeResult[] | DynamoDBSetTypeResult[] {
 	const standardKey = settings.standardKey ? key : key.replace(/\.\d+/gu, ".0");
-	const hasTypeIndexOptionMap = Boolean(settings.typeIndexOptionMap);
-	const cache = getLookupCache(this);
-	const cached = cache.typeDetails.get(standardKey);
-	if (cached && !(cached.reachedDefinitionArray && hasTypeIndexOptionMap)) {
-		return cached.value;
-	}
-
 	const val = this.getAttributeValue(standardKey, {...settings, "standardKey": true});
 	if (typeof val === "undefined") {
 		throw new CustomError.UnknownAttribute(`Invalid Attribute: ${key}`);
@@ -1801,11 +1801,26 @@ Schema.prototype.getAttributeTypeDetails = function (this: Schema, key: string, 
 	});
 
 	const returnObject = result.length < 2 ? result[0] : result;
-	// The details depend on the typeIndexOptionMap only through the attribute value, so they follow the
-	// cache entry of that value.
-	const valueEntry = cache.values.get(standardKey);
-	if (valueEntry && valueEntry.value === val && !(valueEntry.reachedDefinitionArray && hasTypeIndexOptionMap)) {
-		cache.typeDetails.set(standardKey, {"value": returnObject, "reachedDefinitionArray": valueEntry.reachedDefinitionArray});
-	}
 	return returnObject;
 };
+/**
+ * getAttributeTypeDetails for dynamoose's own callers in lib/, which only read the result: they share one
+ * result per path. Other callers use the public method, which builds a new result per call.
+ * @internal
+ */
+export function getSharedAttributeTypeDetails (schema: Schema, key: string, settings: {standardKey?: boolean; typeIndexOptionMap?: {}} = {}): AttributeTypeDetails {
+	const standardKey = settings.standardKey ? key : key.replace(/\.\d+/gu, ".0");
+	const cache = getLookupCache(schema);
+	const cached = cache.typeDetails.get(standardKey);
+	if (cached !== undefined) {
+		return cached;
+	}
+	const callsBefore = settingFunctionCalls;
+	const result = schema.getAttributeTypeDetails(key, settings);
+	// Stored only when the attribute value is cached (so no typeIndexOptionMap played a part) and no
+	// function-valued setting was called (a Set's schema function is called on every lookup).
+	if (settingFunctionCalls === callsBefore && cache.values.has(standardKey) && getLookupCache(schema) === cache) {
+		cache.typeDetails.set(standardKey, result);
+	}
+	return result;
+}

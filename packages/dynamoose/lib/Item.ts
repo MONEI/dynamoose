@@ -4,7 +4,7 @@ import utils from "./utils";
 import Error from "./Error";
 import Internal from "./Internal";
 import {Model} from "./Model";
-import {DynamoDBTypeResult, Schema, DynamoDBSetTypeResult} from "./Schema";
+import {DynamoDBTypeResult, Schema, DynamoDBSetTypeResult, getSharedAttributeTypeDetails} from "./Schema";
 const {internalProperties} = Internal.General;
 const dynamooseUndefined = Internal.Public.undefined;
 const dynamooseAny = Internal.Public.any;
@@ -513,7 +513,7 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 		if (schema.getInternalProperties(internalProperties).settings.timestamps && settings.type === "toDynamo") {
 			const date = new Date();
 			const timeResult = (prop) => {
-				const typeDetails = schema.getAttributeTypeDetails(prop.name);
+				const typeDetails = getSharedAttributeTypeDetails(schema, prop.name);
 				if (Array.isArray(typeDetails)) {
 					throw new CustomError.InvalidType(`Not allowed to use an array of types for the timestamps attribute "${prop.name}".`);
 				}
@@ -797,7 +797,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	if (settings.combine) {
 		schemaAttributes.map((key) => {
 			try {
-				const typeDetails = schema.getAttributeTypeDetails(key);
+				const typeDetails = getSharedAttributeTypeDetails(schema, key);
 
 				return {
 					key,

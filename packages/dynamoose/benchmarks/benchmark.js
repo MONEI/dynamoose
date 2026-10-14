@@ -5,374 +5,24 @@
 // [--build current|baseline] [--out <file>] [--quick]
 // EXTRA_SCHEMA=<module> adds one more schema, in the shape of fixtures/checkout-schema.js.
 // BASELINE=<package directory> replaces dynamoose-baseline with the build in that directory.
-// CI gate: node --expose-gc benchmarks/benchmark.js --gate [--artifacts <directory>] [--quick]
+// CI gate: BASELINE=<base build> node --expose-gc benchmarks/benchmark.js --gate [--artifacts <directory>]
+// [--quick] [--rounds <n>]. --quick: 2 rounds of 20 ms, never significant.
+// BENCHMARK_SCALE_CURRENT=<factor> multiplies the current build's samples, only so a test can reach the
+// gate's failure path.
 const fs = require("fs");
 const inspector = require("inspector");
 const path = require("path");
 const {performance} = require("perf_hooks");
 const {promisify} = require("util");
-const {createSmallSchema, createMediumSchema, createLargeSchema, createExtraLargeSchema} = require("./schemas");
-const checkout = require("./fixtures/checkout-schema");
+const {loadBuild, publishedBaselineDirectory, currentDirectory} = require("./builds");
+const {gate, isGated, gateVerdict, median} = require("./gate");
+const schemas = {...require("./schemas").schemas};
 
-// Test data generators for different schema types
-function generateTestData (schemaType) {
-	switch (schemaType) {
-	case "small":
-		return {
-			"id": `small-${Date.now()}-${Math.random()}`,
-			"name": "Test User",
-			"email": "test@example.com",
-			"age": 25,
-			"active": true
-		};
-
-	case "medium":
-		return {
-			"id": `medium-${Date.now()}-${Math.random()}`,
-			"name": "John Doe",
-			"email": "john.doe@example.com",
-			"profile": {
-				"firstName": "John",
-				"lastName": "Doe",
-				"age": 30
-			},
-			"preferences": {
-				"theme": "dark",
-				"notifications": true,
-				"language": "en"
-			},
-			"tags": ["user", "premium", "verified"],
-			"metadata": {
-				"source": "web",
-				"campaign": "signup_2024"
-			},
-			"version": 1,
-			"createdAt": new Date(),
-			"updatedAt": new Date()
-		};
-
-	case "large":
-		return {
-			"id": `large-${Date.now()}-${Math.random()}`,
-			"userId": `user-${Math.random()}`,
-			"personalInfo": {
-				"firstName": "John",
-				"lastName": "Doe",
-				"dateOfBirth": new Date("1990-01-01"),
-				"gender": "male",
-				"nationality": "US",
-				"languages": ["English", "Spanish"]
-			},
-			"contactInfo": {
-				"primaryEmail": "john.doe@example.com",
-				"secondaryEmail": "john.personal@example.com",
-				"phoneNumbers": [{
-					"type": "mobile",
-					"number": "+1234567890",
-					"countryCode": "+1",
-					"isPrimary": true
-				}],
-				"addresses": [{
-					"type": "home",
-					"street": "123 Main St",
-					"city": "New York",
-					"state": "NY",
-					"zipCode": "10001",
-					"country": "US",
-					"isDefault": true
-				}]
-			},
-			"professionalInfo": {
-				"currentPosition": {
-					"title": "Software Engineer",
-					"company": "Tech Corp",
-					"department": "Engineering",
-					"startDate": new Date("2020-01-01"),
-					"salary": 100000,
-					"currency": "USD"
-				},
-				"workHistory": [{
-					"title": "Junior Developer",
-					"company": "Previous Corp",
-					"startDate": new Date("2018-01-01"),
-					"endDate": new Date("2019-12-31"),
-					"description": "Developed web applications",
-					"achievements": ["Improved performance by 20%"]
-				}],
-				"skills": [{
-					"name": "JavaScript",
-					"level": "advanced",
-					"yearsOfExperience": 5,
-					"certifications": ["AWS Certified"]
-				}],
-				"education": [{
-					"institution": "University of Technology",
-					"degree": "Bachelor",
-					"fieldOfStudy": "Computer Science",
-					"startDate": new Date("2014-09-01"),
-					"endDate": new Date("2018-05-31"),
-					"gpa": 3.8,
-					"honors": ["Magna Cum Laude"]
-				}]
-			},
-			"preferences": {
-				"appearance": {
-					"theme": "dark",
-					"fontSize": "medium",
-					"colorScheme": "blue"
-				},
-				"notifications": {
-					"email": {
-						"marketing": true,
-						"product": true,
-						"security": true
-					},
-					"push": {
-						"enabled": true,
-						"frequency": "immediate"
-					},
-					"sms": {
-						"enabled": false,
-						"emergencyOnly": true
-					}
-				},
-				"privacy": {
-					"profileVisibility": "friends",
-					"dataSharing": false,
-					"analytics": true
-				}
-			},
-			"socialConnections": {
-				"linkedAccounts": [{
-					"platform": "github",
-					"accountId": "johndoe123",
-					"username": "johndoe",
-					"isVerified": true,
-					"connectedAt": new Date()
-				}],
-				"friends": ["friend1", "friend2"],
-				"followers": ["follower1"],
-				"following": ["following1"]
-			},
-			"activityLog": [{
-				"action": "login",
-				"timestamp": new Date(),
-				"ipAddress": "192.168.1.1",
-				"userAgent": "Mozilla/5.0",
-				"location": {
-					"country": "US",
-					"city": "New York",
-					"latitude": 40.7128,
-					"longitude": -74.0060
-				},
-				"metadata": {"source": "web"}
-			}],
-			"settings": {
-				"security": {
-					"twoFactorEnabled": false,
-					"loginAlerts": true,
-					"passwordChangeDate": new Date(),
-					"securityQuestions": [{
-						"question": "What is your pet's name?",
-						"answerHash": "hashed_answer"
-					}]
-				},
-				"billing": {
-					"plan": "premium",
-					"billingCycle": "monthly",
-					"paymentMethods": [{
-						"type": "credit_card",
-						"last4": "1234",
-						"expiryMonth": 12,
-						"expiryYear": 2025,
-						"isDefault": true
-					}]
-				}
-			},
-			"customFields": {
-				"field1": "value1",
-				"field2": 123,
-				"field3": true,
-				"field4": new Date(),
-				"field5": {"nested": "object"},
-				"field6": ["array", "values"],
-				"field7": "value7",
-				"field8": 456,
-				"field9": false,
-				"field10": new Date()
-			},
-			"metadata": {
-				"version": 1,
-				"source": "registration",
-				"importedFrom": "legacy_system",
-				"tags": ["premium", "active"],
-				"flags": ["beta_user"],
-				"experiments": {
-					"activeExperiments": ["experiment1"],
-					"completedExperiments": ["experiment2"]
-				}
-			},
-			"audit": {
-				"createdAt": new Date(),
-				"createdBy": "system",
-				"updatedAt": new Date(),
-				"updatedBy": "user",
-				"version": 1,
-				"changeLog": [{
-					"timestamp": new Date(),
-					"userId": "admin",
-					"action": "create",
-					"changes": {"created": true},
-					"reason": "Initial creation"
-				}]
-			}
-		};
-
-	case "extra-large": {
-		const largeData = generateTestData("large");
-		return {
-			...largeData,
-			"complexDataTypes": {
-				"stringSet": new Set(["tag1", "tag2", "tag3"]),
-				"numberSet": new Set([1, 2, 3, 4, 5]),
-				"binaryData": Buffer.from("test binary data"),
-				"bufferSet": new Set([Buffer.from("data1"), Buffer.from("data2")]),
-				"multiType": Math.random() > 0.5 ? "stringValue" : 42,
-				"nullableField": null,
-				"constantValue": "EXTRA_LARGE_SCHEMA",
-				"combinedIds": `${Date.now()}-combined`,
-				"dateWithOptions": new Date(),
-				"nestedSets": {
-					"tags": new Set(["performance", "benchmark", "test"]),
-					"scores": new Set([95, 87, 92])
-				}
-			},
-			"complexAnalytics": {
-				"behaviorData": [{
-					"sessionId": `session-${Math.random()}`,
-					"startTime": new Date(Date.now() - 3600000),
-					"endTime": new Date(),
-					"pageViews": [{
-						"url": "/home",
-						"title": "Home Page",
-						"timeSpent": 120000,
-						"interactions": [{
-							"type": "click",
-							"element": "button-cta",
-							"timestamp": new Date(),
-							"coordinates": {"x": 500, "y": 300}
-						}]
-					}],
-					"deviceInfo": {
-						"browser": "Chrome",
-						"browserVersion": "91.0",
-						"os": "macOS",
-						"osVersion": "11.0",
-						"device": "desktop",
-						"screenResolution": "1920x1080",
-						"viewport": {"width": 1920, "height": 1080}
-					}
-				}],
-				"performanceMetrics": [{
-					"timestamp": new Date(),
-					"metric": "page_load_time",
-					"value": 1200,
-					"unit": "ms",
-					"context": {"page": "/home"}
-				}]
-			},
-			"businessData": {
-				"companies": [{
-					"id": "company-1",
-					"name": "Tech Corp",
-					"industry": "Technology",
-					"size": "large",
-					"revenue": 10000000,
-					"employees": [{
-						"id": "emp-1",
-						"name": "John Doe",
-						"position": "Engineer",
-						"department": "Engineering",
-						"reports": [{
-							"id": "report-1",
-							"title": "Monthly Report",
-							"data": {"content": "performance report"},
-							"generatedAt": new Date()
-						}]
-					}],
-					"projects": [{
-						"id": "proj-1",
-						"name": "Web Platform",
-						"status": "active",
-						"milestones": [{
-							"id": "milestone-1",
-							"title": "MVP Release",
-							"dueDate": new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-							"tasks": [{
-								"id": "task-1",
-								"title": "Implement authentication",
-								"assignee": "emp-1",
-								"status": "in-progress",
-								"priority": "high",
-								"estimatedHours": 40,
-								"actualHours": 35,
-								"dependencies": []
-							}]
-						}]
-					}]
-				}]
-			},
-		};
-	}
-
-	default:
-		return generateTestData("small");
-	}
-}
-
-const packageDirectory = path.resolve(__dirname, "..");
-const loadBuild = (directory) => ({
-	directory,
-	"dynamoose": require(path.join(directory, "dist")),
-	"Item": require(path.join(directory, "dist", "Item")).Item,
-	"version": require(path.join(directory, "package.json")).version
-});
 const builds = {
-	"baseline": loadBuild(process.env.BASELINE ? path.resolve(process.env.BASELINE) : path.dirname(require.resolve("dynamoose-baseline/package.json"))),
-	"current": loadBuild(packageDirectory)
+	"baseline": loadBuild(process.env.BASELINE ? path.resolve(process.env.BASELINE) : publishedBaselineDirectory),
+	"current": loadBuild(currentDirectory)
 };
 
-const compositeKey = (data) => ({"id": data.id, "userId": data.userId});
-const schemas = {
-	"small": {
-		"create": createSmallSchema,
-		"data": () => generateTestData("small"),
-		"key": (data) => ({"id": data.id}),
-		"update": () => ({"name": "Updated Name"})
-	},
-	"medium": {
-		"create": createMediumSchema,
-		"data": () => generateTestData("medium"),
-		"key": (data) => ({"id": data.id}),
-		"update": () => ({"profile": {...generateTestData("medium").profile, "firstName": "Updated"}}),
-		"nestedUpdate": () => ({"$SET": {"profile.firstName": "Updated"}})
-	},
-	"large": {
-		"create": createLargeSchema,
-		"data": () => generateTestData("large"),
-		"key": compositeKey,
-		"update": () => ({"personalInfo": {...generateTestData("large").personalInfo, "firstName": "Updated"}}),
-		"nestedUpdate": () => ({"$SET": {"personalInfo.firstName": "Updated"}})
-	},
-	"extra-large": {
-		"create": createExtraLargeSchema,
-		"data": () => generateTestData("extra-large"),
-		"key": compositeKey,
-		"update": () => ({"personalInfo": {...generateTestData("extra-large").personalInfo, "firstName": "Updated"}}),
-		"nestedUpdate": () => ({"$SET": {"personalInfo.firstName": "Updated"}})
-	},
-	[checkout.name]: checkout
-};
 if (process.env.EXTRA_SCHEMA) {
 	const extra = require(path.resolve(process.env.EXTRA_SCHEMA));
 	if (!extra.name || schemas[extra.name]) {
@@ -505,12 +155,6 @@ async function measure (suite, buildName, durationMs) {
 	return count / (elapsed / 1000);
 }
 
-const median = (values) => {
-	const sorted = [...values].sort((a, b) => a - b);
-	const middle = Math.floor(sorted.length / 2);
-	return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-};
-
 async function run (suites, {rounds, roundMs, warmupMs}) {
 	const buildNames = Object.keys(builds);
 	for (const suite of suites) {
@@ -526,7 +170,8 @@ async function run (suites, {rounds, roundMs, warmupMs}) {
 		for (const [index, suite] of suites.entries()) {
 			for (const buildName of order) {
 				global.gc();
-				samples[index][buildName].push(await measure(suite, buildName, roundMs));
+				const scale = buildName === "current" && process.env.BENCHMARK_SCALE_CURRENT ? Number(process.env.BENCHMARK_SCALE_CURRENT) : 1;
+				samples[index][buildName].push(await measure(suite, buildName, roundMs) * scale);
 			}
 		}
 	}
@@ -570,7 +215,7 @@ function displayFile (url) {
 	if (nodeModules !== -1) {
 		return file.slice(nodeModules + 1);
 	}
-	return path.isAbsolute(file) ? path.relative(packageDirectory, file) : file;
+	return path.isAbsolute(file) ? path.relative(currentDirectory, file) : file;
 }
 
 // Self time: samples whose top frame is the function. Total time: samples with the function anywhere on
@@ -715,56 +360,6 @@ async function profile ({name, schema, buildName, warmupMs, durationMs, outFile}
 	console.log(formatProfile(analysis, 25));
 }
 
-// The CI gate fails a pull request only on a slowdown of a gated operation that is large, significant
-// and still there in a second run. All other operations and the stages are report only.
-const gate = {
-	"schemas": ["large", "checkout"],
-	"operations": ["create", "get", "update"],
-	"maxSlowdownPercent": 15,
-	"alpha": 0.01
-};
-const isGated = (result) => result.kind === "operation" && gate.schemas.includes(result.schema) && gate.operations.includes(result.operation);
-
-const normalCdf = (z) => {
-	// Abramowitz and Stegun 7.1.26, error below 1.5e-7.
-	const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
-	const erf = 1 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-z * z / 2);
-	return z >= 0 ? (1 + erf) / 2 : (1 - erf) / 2;
-};
-
-// One-sided Mann-Whitney U test, normal approximation with tie and continuity correction: the
-// probability that samples `a` rank this low against samples `b` by chance.
-function mannWhitneyLess (a, b) {
-	const all = [...a.map((value) => ({value, "fromA": true})), ...b.map((value) => ({value, "fromA": false}))].sort((x, y) => x.value - y.value);
-	let rankSumA = 0;
-	let tieTerm = 0;
-	for (let start = 0; start < all.length;) {
-		let end = start;
-		while (end + 1 < all.length && all[end + 1].value === all[start].value) {
-			end++;
-		}
-		const ties = end - start + 1;
-		tieTerm += ties ** 3 - ties;
-		for (let index = start; index <= end; index++) {
-			if (all[index].fromA) {
-				rankSumA += (start + end) / 2 + 1;
-			}
-		}
-		start = end + 1;
-	}
-	const n = all.length;
-	const u = rankSumA - a.length * (a.length + 1) / 2;
-	const mean = a.length * b.length / 2;
-	const sd = Math.sqrt(a.length * b.length / 12 * (n + 1 - tieTerm / (n * (n - 1))));
-	return sd === 0 ? 1 : normalCdf((u - mean + 0.5) / sd);
-}
-
-function gateVerdict (baselineSamples, currentSamples) {
-	const change = (median(currentSamples) / median(baselineSamples) - 1) * 100;
-	const p = mannWhitneyLess(currentSamples, baselineSamples);
-	return {change, p, "slower": change < -gate.maxSlowdownPercent && p < gate.alpha};
-}
-
 function printGateTable (results) {
 	const rows = [["schema", "operation", "baseline ops/s", "current ops/s", "change", "p", "verdict"]];
 	for (const result of results) {
@@ -836,7 +431,14 @@ async function main (args) {
 		return;
 	}
 	if (args.includes("--gate")) {
+		// Without BASELINE the gate would compare with the published release, not with the base branch.
+		if (!process.env.BASELINE) {
+			throw new Error("--gate needs BASELINE=<package directory of the base build>");
+		}
 		const settings = quick ? {"rounds": 2, "roundMs": 20, "warmupMs": 20} : {"rounds": 20, "roundMs": 150, "warmupMs": 300};
+		if (option("--rounds")) {
+			settings.rounds = Number(option("--rounds"));
+		}
 		console.log(`baseline ${builds.baseline.directory} vs current ${builds.current.directory}, node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
 		const passed = await runGate({
 			settings,
@@ -863,9 +465,6 @@ async function main (args) {
 		fs.writeFileSync(args[jsonIndex + 1], JSON.stringify(output, null, "\t"));
 	}
 }
-
-// The equivalence suite (equivalence/corpus.js) reuses the schema configs and their test data.
-module.exports = {schemas, gateVerdict};
 
 if (require.main === module) {
 	main(process.argv.slice(2)).catch((error) => {

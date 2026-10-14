@@ -125,6 +125,10 @@ Cache: a `Map` on the Schema's internal properties, created lazily, never a plai
   invalidate there too.
 - Do not freeze or copy cached values: today's callers already receive references into the schema, so
   returning the same reference keeps behaviour identical.
+- ⚠️ (review, Task 11) the rule above holds for `getAttributeValue` only. 4.2.4 builds a new
+  `getAttributeTypeDetails` result on every call, so a shared cached result changed behaviour for a caller
+  that writes into it. The public method is not cached now; `lib/` uses `getSharedAttributeTypeDetails`.
+  The flag rule became simpler too: a path through an array of definitions is never cached.
 
 Benchmark (`packages/dynamoose/benchmarks/benchmark.js`):
 
@@ -317,6 +321,10 @@ The create gap to upstream is the `save` conform pass (Context); update and get 
   returns a new copy on every call, because callers have always received a new array.
 - ⚠️ a caller that changes an attribute definition object after the Schema constructor (the constructor copies
   the top level only, nested objects are the caller's) is not seen by the cache. `lib/` never does this.
+  The user accepted this difference; Task 11 documents and pins it.
+- ⚠️ (review, Task 11) two cache rules above changed behaviour and are replaced in Task 11: the shared
+  `getAttributeTypeDetails` result, and the skipped calls to a function-valued Set `schema` (the Set branch
+  calls it on every lookup in 4.2.4; "not supported" was wrong).
 
 **Numbers with the cache (2026-10-14, node v24.21.0, full runs: 10 rounds of 200 ms, medians in ops/s)**
 
@@ -654,6 +662,78 @@ times higher, and the other large rows match Task 5 within that spread.
   frozen)
 - [x] update `packages/dynamoose/benchmarks/README.md` with the measured numbers
 - [x] add a `PENDING_CHANGELOG.md` entry (performance, no behaviour change)
+
+### ➕ Task 11: Code review fixes
+
+**Files:**
+- Modify: `packages/dynamoose/lib/Schema.ts`, `lib/Item.ts`, `lib/Model/index.ts`, `lib/Populate.ts`,
+  `lib/utils/dynamoose/getValueTypeCheckResult.ts`
+- Modify: `packages/dynamoose/test/SchemaCache.js`, `test/AttributeTypeCache.js`, `test/Equivalence.js`,
+  `equivalence/compare.js`, `equivalence/corpus.js`
+- Create: `packages/dynamoose/benchmarks/builds.js`, `benchmarks/gate.js`
+- Modify: `packages/dynamoose/benchmarks/benchmark.js`, `schemas.js`, `smoke.test.js`, `gate.test.js`,
+  `README.md`, `CLAUDE.md`, `PENDING_CHANGELOG.md`
+
+User decisions: fix the function-valued Set `schema` calls and the shared `getAttributeTypeDetails`
+result so behaviour matches 4.2.4; accept and document the nested definition difference; keep the gate
+design; keep the lockfile; leave the Task 8 bug unfixed.
+
+- [x] the public `getAttributeTypeDetails` is the 4.2.4 code again (not cached): each call builds a new
+  result, so a caller's change never reaches the next call. `lib/` calls `getSharedAttributeTypeDetails`
+  (`@internal`), which caches one result per path and must only be read
+- [x] a function-valued setting (a Set's `schema`) is called on every lookup again: `getAttributeSettingValue`
+  counts such calls, and `attributes()` and the shared type details are not cached when one happened
+- [x] a path through an array of attribute definitions is never cached (the `reachedDefinitionArray` flag on
+  entries is gone; every operation passes a `typeIndexOptionMap`, so the flagged entries never served one)
+- [x] `clearSchemaLookupCaches` marked `@internal`
+- [x] corpus cases: function-valued Set schema (one that answers differently per call), populate, create
+  table request with a GSI and an LSI, the public Schema methods called directly (with and without a
+  `typeIndexOptionMap`, inherited keys, a changed returned array, changed type details, a declared `ttl`
+  that the table overwrites). The function-valued and direct-call cases fail against the first cache version
+- [x] `test/SchemaCache.js`: identity tests removed, list index paths share one entry, the accepted
+  difference pinned (`definition.address.schema.city = Number` after the constructor: still `S`)
+- [x] `test/AttributeTypeCache.js`: `it.skip` to `it.failing`, so a fix turns the tests red
+- [x] equivalence harness: key order per step; `differs: {reason, steps}` is the route for a deliberate
+  behaviour change; a test checks that the baseline is the declared release and not the current build;
+  `clone` throws on an object it cannot copy
+- [x] benchmark: shared build loader (`benchmarks/builds.js`; the equivalence suite always loads the
+  published release), schema configs and data moved to `schemas.js`, gate rule to `gate.js`; `--gate`
+  refuses to run without `BASELINE`; `--rounds`; test hook `BENCHMARK_SCALE_CURRENT`; smoke test of the
+  failure path (exit code 1, re-run, profiles, comparisons); temp directories removed in `finally`
+- [x] gate rule: a slowdown of exactly 15% failed because `(85 / 100 - 1) * 100` is -15.000000000000002; the
+  verdict compares `current < baseline * 0.85` now. Tests at exactly -15% and at -20% with p about 0.03
+- [x] docs: CLAUDE.md cache rules, the accepted difference, the known bug and the `differs` route; README
+  (gate limits, smoke content, `--gate --quick`, run C); changelog ("no change in behaviour except ...")
+- ⚠️ a fully uncached `getAttributeTypeDetails` (no shared result in `lib/`) cost 10% to 23% on the gated
+  rows against the first cache version (gate run, plain node, load about 8). With the shared result for
+  `lib/`, the gated rows match the first cache version within noise (-1.4% to +3.0%, no p below 0.08)
+- ⚠️ code that replaces `Schema.prototype.getAttributeTypeDetails` no longer intercepts the lookups `lib/`
+  makes; only direct calls reach it
+- ⚠️ the type details `lib/` shares are computed once per path, so a `dynamoose.type.THIS` attribute with
+  its own `settings` object gets its `settings.model` written once, not on every lookup (an equal value)
+- validation: `npm run build`; `npm test` 36 suites, 2626 passed, 18 skipped; `npm run test:types`;
+  `npm run benchmark:smoke` 13 passed; `npm run test:integration` 26 passed (own `dynamoose-it` container
+  on 8100, stopped); root `npm run lint` clean
+
+**Numbers after the review fixes (run C: 2026-10-14, node v24.22.0, plain node, full run, load average 8.0
+at start, 4.5 at end)**
+
+| schema      | operation      | baseline | current |  change |
+| ----------- | -------------- | -------: | ------: | ------: |
+| large       | create         |    129.9 |   297.4 | +129.0% |
+| large       | create-request |    129.3 |   311.6 | +141.1% |
+| large       | get            |    270.5 |   661.7 | +144.6% |
+| large       | update         |    157.7 |   379.9 | +140.9% |
+| extra-large | create         |     74.7 |   164.6 | +120.3% |
+| extra-large | get            |    154.3 |   364.5 | +136.2% |
+| extra-large | update         |     92.1 |   219.8 | +138.6% |
+| checkout    | create         |    147.3 |   219.0 |  +48.6% |
+| checkout    | get            |    321.0 |   562.4 |  +75.2% |
+| checkout    | update         |     98.3 |   240.4 | +144.4% |
+
+Every operation on every schema is faster (smallest: checkout create +48.6%). Stages: the public
+`getAttributeTypeDetails` +12.8% to +60.8% (was +776% cached); checkout `getTypePaths` -3.3% (not covered by
+the cache, noise level); all other stages faster.
 
 ## Post-Completion
 

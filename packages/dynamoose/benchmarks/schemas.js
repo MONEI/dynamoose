@@ -1,3 +1,5 @@
+const checkout = require("./fixtures/checkout-schema");
+
 // Small schema for baseline comparison
 const createSmallSchema = (dynamoose) =>
 	new dynamoose.Schema({
@@ -1129,9 +1131,359 @@ const createExtraLargeSchema = (dynamoose) =>
 		}
 	});
 
+// Test data generators for different schema types
+function generateTestData (schemaType) {
+	switch (schemaType) {
+	case "small":
+		return {
+			"id": `small-${Date.now()}-${Math.random()}`,
+			"name": "Test User",
+			"email": "test@example.com",
+			"age": 25,
+			"active": true
+		};
+
+	case "medium":
+		return {
+			"id": `medium-${Date.now()}-${Math.random()}`,
+			"name": "John Doe",
+			"email": "john.doe@example.com",
+			"profile": {
+				"firstName": "John",
+				"lastName": "Doe",
+				"age": 30
+			},
+			"preferences": {
+				"theme": "dark",
+				"notifications": true,
+				"language": "en"
+			},
+			"tags": ["user", "premium", "verified"],
+			"metadata": {
+				"source": "web",
+				"campaign": "signup_2024"
+			},
+			"version": 1,
+			"createdAt": new Date(),
+			"updatedAt": new Date()
+		};
+
+	case "large":
+		return {
+			"id": `large-${Date.now()}-${Math.random()}`,
+			"userId": `user-${Math.random()}`,
+			"personalInfo": {
+				"firstName": "John",
+				"lastName": "Doe",
+				"dateOfBirth": new Date("1990-01-01"),
+				"gender": "male",
+				"nationality": "US",
+				"languages": ["English", "Spanish"]
+			},
+			"contactInfo": {
+				"primaryEmail": "john.doe@example.com",
+				"secondaryEmail": "john.personal@example.com",
+				"phoneNumbers": [{
+					"type": "mobile",
+					"number": "+1234567890",
+					"countryCode": "+1",
+					"isPrimary": true
+				}],
+				"addresses": [{
+					"type": "home",
+					"street": "123 Main St",
+					"city": "New York",
+					"state": "NY",
+					"zipCode": "10001",
+					"country": "US",
+					"isDefault": true
+				}]
+			},
+			"professionalInfo": {
+				"currentPosition": {
+					"title": "Software Engineer",
+					"company": "Tech Corp",
+					"department": "Engineering",
+					"startDate": new Date("2020-01-01"),
+					"salary": 100000,
+					"currency": "USD"
+				},
+				"workHistory": [{
+					"title": "Junior Developer",
+					"company": "Previous Corp",
+					"startDate": new Date("2018-01-01"),
+					"endDate": new Date("2019-12-31"),
+					"description": "Developed web applications",
+					"achievements": ["Improved performance by 20%"]
+				}],
+				"skills": [{
+					"name": "JavaScript",
+					"level": "advanced",
+					"yearsOfExperience": 5,
+					"certifications": ["AWS Certified"]
+				}],
+				"education": [{
+					"institution": "University of Technology",
+					"degree": "Bachelor",
+					"fieldOfStudy": "Computer Science",
+					"startDate": new Date("2014-09-01"),
+					"endDate": new Date("2018-05-31"),
+					"gpa": 3.8,
+					"honors": ["Magna Cum Laude"]
+				}]
+			},
+			"preferences": {
+				"appearance": {
+					"theme": "dark",
+					"fontSize": "medium",
+					"colorScheme": "blue"
+				},
+				"notifications": {
+					"email": {
+						"marketing": true,
+						"product": true,
+						"security": true
+					},
+					"push": {
+						"enabled": true,
+						"frequency": "immediate"
+					},
+					"sms": {
+						"enabled": false,
+						"emergencyOnly": true
+					}
+				},
+				"privacy": {
+					"profileVisibility": "friends",
+					"dataSharing": false,
+					"analytics": true
+				}
+			},
+			"socialConnections": {
+				"linkedAccounts": [{
+					"platform": "github",
+					"accountId": "johndoe123",
+					"username": "johndoe",
+					"isVerified": true,
+					"connectedAt": new Date()
+				}],
+				"friends": ["friend1", "friend2"],
+				"followers": ["follower1"],
+				"following": ["following1"]
+			},
+			"activityLog": [{
+				"action": "login",
+				"timestamp": new Date(),
+				"ipAddress": "192.168.1.1",
+				"userAgent": "Mozilla/5.0",
+				"location": {
+					"country": "US",
+					"city": "New York",
+					"latitude": 40.7128,
+					"longitude": -74.0060
+				},
+				"metadata": {"source": "web"}
+			}],
+			"settings": {
+				"security": {
+					"twoFactorEnabled": false,
+					"loginAlerts": true,
+					"passwordChangeDate": new Date(),
+					"securityQuestions": [{
+						"question": "What is your pet's name?",
+						"answerHash": "hashed_answer"
+					}]
+				},
+				"billing": {
+					"plan": "premium",
+					"billingCycle": "monthly",
+					"paymentMethods": [{
+						"type": "credit_card",
+						"last4": "1234",
+						"expiryMonth": 12,
+						"expiryYear": 2025,
+						"isDefault": true
+					}]
+				}
+			},
+			"customFields": {
+				"field1": "value1",
+				"field2": 123,
+				"field3": true,
+				"field4": new Date(),
+				"field5": {"nested": "object"},
+				"field6": ["array", "values"],
+				"field7": "value7",
+				"field8": 456,
+				"field9": false,
+				"field10": new Date()
+			},
+			"metadata": {
+				"version": 1,
+				"source": "registration",
+				"importedFrom": "legacy_system",
+				"tags": ["premium", "active"],
+				"flags": ["beta_user"],
+				"experiments": {
+					"activeExperiments": ["experiment1"],
+					"completedExperiments": ["experiment2"]
+				}
+			},
+			"audit": {
+				"createdAt": new Date(),
+				"createdBy": "system",
+				"updatedAt": new Date(),
+				"updatedBy": "user",
+				"version": 1,
+				"changeLog": [{
+					"timestamp": new Date(),
+					"userId": "admin",
+					"action": "create",
+					"changes": {"created": true},
+					"reason": "Initial creation"
+				}]
+			}
+		};
+
+	case "extra-large": {
+		const largeData = generateTestData("large");
+		return {
+			...largeData,
+			"complexDataTypes": {
+				"stringSet": new Set(["tag1", "tag2", "tag3"]),
+				"numberSet": new Set([1, 2, 3, 4, 5]),
+				"binaryData": Buffer.from("test binary data"),
+				"bufferSet": new Set([Buffer.from("data1"), Buffer.from("data2")]),
+				"multiType": Math.random() > 0.5 ? "stringValue" : 42,
+				"nullableField": null,
+				"constantValue": "EXTRA_LARGE_SCHEMA",
+				"combinedIds": `${Date.now()}-combined`,
+				"dateWithOptions": new Date(),
+				"nestedSets": {
+					"tags": new Set(["performance", "benchmark", "test"]),
+					"scores": new Set([95, 87, 92])
+				}
+			},
+			"complexAnalytics": {
+				"behaviorData": [{
+					"sessionId": `session-${Math.random()}`,
+					"startTime": new Date(Date.now() - 3600000),
+					"endTime": new Date(),
+					"pageViews": [{
+						"url": "/home",
+						"title": "Home Page",
+						"timeSpent": 120000,
+						"interactions": [{
+							"type": "click",
+							"element": "button-cta",
+							"timestamp": new Date(),
+							"coordinates": {"x": 500, "y": 300}
+						}]
+					}],
+					"deviceInfo": {
+						"browser": "Chrome",
+						"browserVersion": "91.0",
+						"os": "macOS",
+						"osVersion": "11.0",
+						"device": "desktop",
+						"screenResolution": "1920x1080",
+						"viewport": {"width": 1920, "height": 1080}
+					}
+				}],
+				"performanceMetrics": [{
+					"timestamp": new Date(),
+					"metric": "page_load_time",
+					"value": 1200,
+					"unit": "ms",
+					"context": {"page": "/home"}
+				}]
+			},
+			"businessData": {
+				"companies": [{
+					"id": "company-1",
+					"name": "Tech Corp",
+					"industry": "Technology",
+					"size": "large",
+					"revenue": 10000000,
+					"employees": [{
+						"id": "emp-1",
+						"name": "John Doe",
+						"position": "Engineer",
+						"department": "Engineering",
+						"reports": [{
+							"id": "report-1",
+							"title": "Monthly Report",
+							"data": {"content": "performance report"},
+							"generatedAt": new Date()
+						}]
+					}],
+					"projects": [{
+						"id": "proj-1",
+						"name": "Web Platform",
+						"status": "active",
+						"milestones": [{
+							"id": "milestone-1",
+							"title": "MVP Release",
+							"dueDate": new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+							"tasks": [{
+								"id": "task-1",
+								"title": "Implement authentication",
+								"assignee": "emp-1",
+								"status": "in-progress",
+								"priority": "high",
+								"estimatedHours": 40,
+								"actualHours": 35,
+								"dependencies": []
+							}]
+						}]
+					}]
+				}]
+			},
+		};
+	}
+
+	default:
+		return generateTestData("small");
+	}
+}
+
+// The schema configs the benchmark (benchmark.js) and the equivalence suite (equivalence/corpus.js) use.
+const compositeKey = (data) => ({"id": data.id, "userId": data.userId});
+const schemas = {
+	"small": {
+		"create": createSmallSchema,
+		"data": () => generateTestData("small"),
+		"key": (data) => ({"id": data.id}),
+		"update": () => ({"name": "Updated Name"})
+	},
+	"medium": {
+		"create": createMediumSchema,
+		"data": () => generateTestData("medium"),
+		"key": (data) => ({"id": data.id}),
+		"update": () => ({"profile": {...generateTestData("medium").profile, "firstName": "Updated"}}),
+		"nestedUpdate": () => ({"$SET": {"profile.firstName": "Updated"}})
+	},
+	"large": {
+		"create": createLargeSchema,
+		"data": () => generateTestData("large"),
+		"key": compositeKey,
+		"update": () => ({"personalInfo": {...generateTestData("large").personalInfo, "firstName": "Updated"}}),
+		"nestedUpdate": () => ({"$SET": {"personalInfo.firstName": "Updated"}})
+	},
+	"extra-large": {
+		"create": createExtraLargeSchema,
+		"data": () => generateTestData("extra-large"),
+		"key": compositeKey,
+		"update": () => ({"personalInfo": {...generateTestData("extra-large").personalInfo, "firstName": "Updated"}}),
+		"nestedUpdate": () => ({"$SET": {"personalInfo.firstName": "Updated"}})
+	},
+	[checkout.name]: checkout
+};
 module.exports = {
 	createSmallSchema,
 	createMediumSchema,
 	createLargeSchema,
-	createExtraLargeSchema
+	createExtraLargeSchema,
+	generateTestData,
+	schemas
 };

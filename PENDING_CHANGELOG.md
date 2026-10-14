@@ -8,7 +8,7 @@
 
 ### General
 
-- Improved performance by caching schema lookups per Schema. `Model.create`/`Item.save` are about 62% to 108% faster, `Model.get` about 100% to 154%, and `Model.update` about 122% to 136%, measured on large schemas against 4.2.4 without network time. There is no change in behaviour
+- Improved performance by caching schema lookups per Schema. `Model.create`/`Item.save` are about 49% to 129% faster, `Model.get` about 75% to 145%, and `Model.update` about 139% to 144%, measured on large schemas against 4.2.4 without network time. There is no change in behaviour except one: the Schema constructor copies only the top level of the definition, and a nested definition object (an attribute's definition object or a nested `schema`) that is added, removed or replaced after `new Schema()` is no longer seen by the schema lookups, and `Schema.attributes()` sees no change to these objects after its first call. Change a definition before you pass it to `new Schema()`
 
 ### Bug Fixes
 
