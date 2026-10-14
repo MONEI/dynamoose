@@ -4,6 +4,8 @@
 // Profile one operation or stage: node --expose-gc benchmarks/benchmark.js --profile <name> <schema>
 // [--build current|baseline] [--out <file>] [--quick]
 // EXTRA_SCHEMA=<module> adds one more schema, in the shape of fixtures/checkout-schema.js.
+// BASELINE=<package directory> replaces dynamoose-baseline with the build in that directory.
+// CI gate: node --expose-gc benchmarks/benchmark.js --gate [--artifacts <directory>] [--quick]
 const fs = require("fs");
 const inspector = require("inspector");
 const path = require("path");
@@ -328,17 +330,16 @@ function generateTestData (schemaType) {
 	}
 }
 
+const packageDirectory = path.resolve(__dirname, "..");
+const loadBuild = (directory) => ({
+	directory,
+	"dynamoose": require(path.join(directory, "dist")),
+	"Item": require(path.join(directory, "dist", "Item")).Item,
+	"version": require(path.join(directory, "package.json")).version
+});
 const builds = {
-	"baseline": {
-		"dynamoose": require("dynamoose-baseline"),
-		"Item": require("dynamoose-baseline/dist/Item").Item,
-		"version": require("dynamoose-baseline/package.json").version
-	},
-	"current": {
-		"dynamoose": require("../dist"),
-		"Item": require("../dist/Item").Item,
-		"version": require("../package.json").version
-	}
+	"baseline": loadBuild(process.env.BASELINE ? path.resolve(process.env.BASELINE) : path.dirname(require.resolve("dynamoose-baseline/package.json"))),
+	"current": loadBuild(packageDirectory)
 };
 
 const compositeKey = (data) => ({"id": data.id, "userId": data.userId});
@@ -510,8 +511,7 @@ const median = (values) => {
 	return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-async function run ({rounds, roundMs, warmupMs}) {
-	const suites = await setup();
+async function run (suites, {rounds, roundMs, warmupMs}) {
 	const buildNames = Object.keys(builds);
 	for (const suite of suites) {
 		for (const buildName of buildNames) {
@@ -546,23 +546,21 @@ async function run ({rounds, roundMs, warmupMs}) {
 }
 
 // Columns listed in `leftColumns` are padded on the right, all others on the left.
-function printRows (rows, leftColumns) {
+function formatRows (rows, leftColumns) {
 	const widths = rows[0].map((_, column) => Math.max(...rows.map((row) => row[column].length)));
-	for (const row of rows) {
-		console.log(row.map((cell, column) => leftColumns.includes(column) ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join("  ").trimEnd());
-	}
+	return rows.map((row) => row.map((cell, column) => leftColumns.includes(column) ? cell.padEnd(widths[column]) : cell.padStart(widths[column])).join("  ").trimEnd()).join("\n");
 }
+
+const formatChange = (change) => `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`;
 
 function printTable (results, nameHeader) {
 	const rows = [["schema", nameHeader, "baseline ops/s", "current ops/s", "change"]];
 	for (const result of results) {
-		const change = `${result.change >= 0 ? "+" : ""}${result.change.toFixed(1)}%`;
-		rows.push([result.schema, result.operation, result.baseline.median.toFixed(1), result.current.median.toFixed(1), change]);
+		rows.push([result.schema, result.operation, result.baseline.median.toFixed(1), result.current.median.toFixed(1), formatChange(result.change)]);
 	}
-	printRows(rows, [0, 1]);
+	console.log(formatRows(rows, [0, 1]));
 }
 
-const packageDirectory = path.resolve(__dirname, "..");
 function displayFile (url) {
 	if (!url) {
 		return "(vm)";
@@ -627,7 +625,7 @@ function analyzeProfile (profile) {
 	return {totalTime, "functions": [...functions.values()], files};
 }
 
-function printProfile ({totalTime, functions, files}, limit) {
+function formatProfile ({totalTime, functions, files}, limit) {
 	const ms = (microseconds) => (microseconds / 1000).toFixed(1);
 	const share = (microseconds) => `${(microseconds / totalTime * 100).toFixed(1)}%`;
 	const functionRows = (sortKey) => {
@@ -637,30 +635,54 @@ function printProfile ({totalTime, functions, files}, limit) {
 		}
 		return rows;
 	};
-
-	console.log(`\nprofiled ${ms(totalTime)} ms\n\ntop functions by self time`);
-	printRows(functionRows("self"), [4, 5]);
-	console.log("\ntop functions by total time");
-	printRows(functionRows("total"), [4, 5]);
-	console.log("\nself time per file");
 	const fileRows = [["self ms", "self", "file"]];
 	for (const [file, self] of [...files].sort((a, b) => b[1] - a[1]).slice(0, limit)) {
 		fileRows.push([ms(self), share(self), file]);
 	}
-	printRows(fileRows, [2]);
+	return [
+		`\nprofiled ${ms(totalTime)} ms\n\ntop functions by self time`,
+		formatRows(functionRows("self"), [4, 5]),
+		"\ntop functions by total time",
+		formatRows(functionRows("total"), [4, 5]),
+		"\nself time per file",
+		formatRows(fileRows, [2])
+	].join("\n");
 }
 
-async function profile ({name, schema, buildName, warmupMs, durationMs, outFile}) {
-	if (!builds[buildName]) {
-		throw new Error(`Unknown build "${buildName}", use current or baseline`);
+// The functions whose self time per call grew most from the baseline to the current profile. The two
+// builds live in different directories and a change moves line numbers, so a function is matched by
+// name and by its path inside its build directory, else from the first dist/ or node_modules/ on.
+function compareProfiles (baseline, current, limit) {
+	const perCall = ({analysis, calls, directory}) => {
+		const prefix = `${displayFile(directory)}/`;
+		const times = new Map();
+		for (const entry of analysis.functions) {
+			const file = entry.file.startsWith(prefix) ? entry.file.slice(prefix.length) : entry.file.replace(/^.*?(node_modules\/|dist\/)/u, "$1");
+			const key = `${entry.name} ${file}`;
+			times.set(key, (times.get(key) || 0) + entry.self / calls);
+		}
+		return times;
+	};
+	const before = perCall(baseline);
+	const after = perCall(current);
+	const growth = [...new Set([...before.keys(), ...after.keys()])].map((key) => ({key, "baseline": before.get(key) || 0, "current": after.get(key) || 0}));
+	const rows = [["baseline µs/call", "current µs/call", "growth µs/call", "function and file"]];
+	for (const entry of growth.sort((a, b) => b.current - b.baseline - (a.current - a.baseline)).slice(0, limit)) {
+		rows.push([entry.baseline.toFixed(1), entry.current.toFixed(1), (entry.current - entry.baseline).toFixed(1), entry.key]);
 	}
-	const suites = await setup();
+	return `self time per call, largest growth first\n${formatRows(rows, [3])}`;
+}
+
+function findSuite (suites, name, schema) {
 	const suite = suites.find((suite) => suite.schema === schema && suite.operation === name);
 	if (!suite) {
 		const known = [...new Set(suites.map((suite) => `${suite.operation} ${suite.schema}`))];
 		throw new Error(`Unknown operation "${name}" on schema "${schema}". Known:\n${known.join("\n")}`);
 	}
+	return suite;
+}
 
+async function profileSuite (suite, buildName, {warmupMs, durationMs, outFile}) {
 	// The warm-up also sizes the run, so that all inputs exist before the profiler starts.
 	const opsPerSecond = await measure(suite, buildName, warmupMs);
 	const state = stateFor(suite, buildName);
@@ -680,8 +702,117 @@ async function profile ({name, schema, buildName, warmupMs, durationMs, outFile}
 	session.disconnect();
 
 	fs.writeFileSync(outFile, JSON.stringify(cpuProfile));
-	console.log(`${name} on ${schema}, ${buildName} build ${builds[buildName].version}, ${inputs.length} calls, profile written to ${outFile}`);
-	printProfile(analyzeProfile(cpuProfile), 25);
+	return {"analysis": analyzeProfile(cpuProfile), "calls": inputs.length, "directory": builds[buildName].directory};
+}
+
+async function profile ({name, schema, buildName, warmupMs, durationMs, outFile}) {
+	if (!builds[buildName]) {
+		throw new Error(`Unknown build "${buildName}", use current or baseline`);
+	}
+	const suite = findSuite(await setup(), name, schema);
+	const {analysis, calls} = await profileSuite(suite, buildName, {warmupMs, durationMs, outFile});
+	console.log(`${name} on ${schema}, ${buildName} build ${builds[buildName].version}, ${calls} calls, profile written to ${outFile}`);
+	console.log(formatProfile(analysis, 25));
+}
+
+// The CI gate fails a pull request only on a slowdown of a gated operation that is large, significant
+// and still there in a second run. All other operations and the stages are report only.
+const gate = {
+	"schemas": ["large", "checkout"],
+	"operations": ["create", "update"],
+	"maxSlowdownPercent": 15,
+	"alpha": 0.01
+};
+const isGated = (result) => result.kind === "operation" && gate.schemas.includes(result.schema) && gate.operations.includes(result.operation);
+
+const normalCdf = (z) => {
+	// Abramowitz and Stegun 7.1.26, error below 1.5e-7.
+	const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+	const erf = 1 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-z * z / 2);
+	return z >= 0 ? (1 + erf) / 2 : (1 - erf) / 2;
+};
+
+// One-sided Mann-Whitney U test, normal approximation with tie and continuity correction: the
+// probability that samples `a` rank this low against samples `b` by chance.
+function mannWhitneyLess (a, b) {
+	const all = [...a.map((value) => ({value, "fromA": true})), ...b.map((value) => ({value, "fromA": false}))].sort((x, y) => x.value - y.value);
+	let rankSumA = 0;
+	let tieTerm = 0;
+	for (let start = 0; start < all.length;) {
+		let end = start;
+		while (end + 1 < all.length && all[end + 1].value === all[start].value) {
+			end++;
+		}
+		const ties = end - start + 1;
+		tieTerm += ties ** 3 - ties;
+		for (let index = start; index <= end; index++) {
+			if (all[index].fromA) {
+				rankSumA += (start + end) / 2 + 1;
+			}
+		}
+		start = end + 1;
+	}
+	const n = all.length;
+	const u = rankSumA - a.length * (a.length + 1) / 2;
+	const mean = a.length * b.length / 2;
+	const sd = Math.sqrt(a.length * b.length / 12 * (n + 1 - tieTerm / (n * (n - 1))));
+	return sd === 0 ? 1 : normalCdf((u - mean + 0.5) / sd);
+}
+
+function gateVerdict (baselineSamples, currentSamples) {
+	const change = (median(currentSamples) / median(baselineSamples) - 1) * 100;
+	const p = mannWhitneyLess(currentSamples, baselineSamples);
+	return {change, p, "slower": change < -gate.maxSlowdownPercent && p < gate.alpha};
+}
+
+function printGateTable (results) {
+	const rows = [["schema", "operation", "baseline ops/s", "current ops/s", "change", "p", "verdict"]];
+	for (const result of results) {
+		const {change, p, slower} = gateVerdict(result.baseline.samples, result.current.samples);
+		rows.push([result.schema, result.operation, result.baseline.median.toFixed(1), result.current.median.toFixed(1), formatChange(change), p.toPrecision(2), slower ? "SLOWER" : "ok"]);
+	}
+	console.log(formatRows(rows, [0, 1, 6]));
+}
+
+async function runGate ({settings, profileSettings, artifactsDirectory}) {
+	const slower = (result) => isGated(result) && gateVerdict(result.baseline.samples, result.current.samples).slower;
+	const suites = (await setup()).filter((suite) => gate.schemas.includes(suite.schema));
+	const results = await run(suites, settings);
+	console.log(`gate: fails on a median slowdown over ${gate.maxSlowdownPercent}% with p < ${gate.alpha} (one-sided Mann-Whitney U), confirmed by a second run`);
+	printGateTable(results.filter(isGated));
+	console.log("\noperations (report only)");
+	printTable(results.filter((result) => result.kind === "operation" && !isGated(result)), "operation");
+	console.log("\nstages (report only)");
+	printTable(results.filter((result) => result.kind === "stage"), "stage");
+
+	let failed = results.filter(slower);
+	if (failed.length === 0) {
+		return true;
+	}
+	console.log(`\n${failed.map((result) => `${result.operation} ${result.schema}`).join(", ")} slower, running again to confirm`);
+	const rerun = await run(failed.map((result) => findSuite(suites, result.operation, result.schema)), settings);
+	printGateTable(rerun);
+	failed = rerun.filter(slower);
+	if (failed.length === 0) {
+		console.log("not confirmed, gate passes");
+		return true;
+	}
+
+	fs.mkdirSync(artifactsDirectory, {"recursive": true});
+	for (const result of failed) {
+		const suite = findSuite(suites, result.operation, result.schema);
+		const profiles = {};
+		for (const buildName of Object.keys(builds)) {
+			const base = path.join(artifactsDirectory, `${buildName}-${result.schema}-${result.operation}`);
+			profiles[buildName] = await profileSuite(suite, buildName, {...profileSettings, "outFile": `${base}.cpuprofile`});
+			fs.writeFileSync(`${base}.txt`, `${result.operation} on ${result.schema}, ${buildName} build (${builds[buildName].directory}), ${profiles[buildName].calls} calls\n${formatProfile(profiles[buildName].analysis, 25)}\n`);
+		}
+		const comparison = compareProfiles(profiles.baseline, profiles.current, 15);
+		fs.writeFileSync(path.join(artifactsDirectory, `${result.schema}-${result.operation}-comparison.txt`), `${comparison}\n`);
+		console.log(`\nconfirmed slowdown: ${result.operation} on ${result.schema}\n${comparison}`);
+	}
+	console.log(`\nprofiles and summaries written to ${artifactsDirectory}`);
+	return false;
 }
 
 async function main (args) {
@@ -704,11 +835,24 @@ async function main (args) {
 		});
 		return;
 	}
+	if (args.includes("--gate")) {
+		const settings = quick ? {"rounds": 2, "roundMs": 20, "warmupMs": 20} : {"rounds": 20, "roundMs": 150, "warmupMs": 300};
+		console.log(`baseline ${builds.baseline.directory} vs current ${builds.current.directory}, node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
+		const passed = await runGate({
+			settings,
+			"profileSettings": quick ? {"warmupMs": 50, "durationMs": 300} : {"warmupMs": 1000, "durationMs": 5000},
+			"artifactsDirectory": option("--artifacts") || "benchmark-gate"
+		});
+		if (!passed) {
+			process.exitCode = 1;
+		}
+		return;
+	}
 	const jsonIndex = args.indexOf("--json");
 	const settings = quick ? {"rounds": 2, "roundMs": 20, "warmupMs": 20} : {"rounds": 10, "roundMs": 200, "warmupMs": 500};
 
 	console.log(`baseline ${builds.baseline.version} vs current ${builds.current.version} (dist), node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
-	const all = await run(settings);
+	const all = await run(await setup(), settings);
 	const results = all.filter((result) => result.kind === "operation");
 	const stageResults = all.filter((result) => result.kind === "stage");
 	printTable(results, "operation");
@@ -721,7 +865,7 @@ async function main (args) {
 }
 
 // The equivalence suite (equivalence/corpus.js) reuses the schema configs and their test data.
-module.exports = {schemas};
+module.exports = {schemas, gateVerdict};
 
 if (require.main === module) {
 	main(process.argv.slice(2)).catch((error) => {

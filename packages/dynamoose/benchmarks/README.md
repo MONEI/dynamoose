@@ -20,6 +20,8 @@ npm run benchmark:smoke                            # jest: --quick and --profile
 npm run benchmark -- --profile update large        # CPU profile of one operation or stage
 npm run benchmark -- --profile create large --build baseline --out create.cpuprofile
 EXTRA_SCHEMA=path/to/module.js npm run benchmark  # also run one more schema, see below
+BASELINE=../other/packages/dynamoose npm run benchmark  # compare against another build (needs its dist)
+npm run benchmark -- --gate                        # the CI gate, see below
 ```
 
 The script needs `node --expose-gc`; the npm script passes it.
@@ -72,6 +74,26 @@ inputs are made before the profiler starts. It writes a `.cpuprofile` (`--out <f
 - the self time per file, dynamoose and its dependencies
 
 Total time counts a function once per sample, also when it is on the stack more than once.
+
+## CI gate
+
+The `benchmark-gate` job of `.github/workflows/ci.yml` runs on every pull request, on Node 24 (the
+runtime of the prod Lambdas). It checks out the pull request and its base branch, installs and builds
+both, runs `npm run benchmark:smoke`, then `npm run benchmark -- --gate` with `BASELINE` set to the
+base checkout.
+
+`--gate` runs the operations and stages of the large and checkout schemas, 20 interleaved rounds of
+150 ms. Only `create` and `update` on these two schemas can fail the job. All other rows are report
+only. A gated operation fails when both are true:
+
+- its median ops/s is more than 15% below the base
+- a one-sided Mann-Whitney U test over the round samples gives p < 0.01
+
+A failed operation runs again (20 new rounds). Only a failure in both runs fails the job. Then the gate
+profiles the operation on both builds and writes to `--artifacts <directory>` (default `benchmark-gate`):
+the `.cpuprofile` and the summary (`.txt`) per build, and `<schema>-<operation>-comparison.txt`, the
+functions whose self time per call grew most. The job uploads that directory as the `benchmark-gate`
+artifact, and the log prints the comparison.
 
 ## Schemas
 
