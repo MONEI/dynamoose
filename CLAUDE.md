@@ -31,6 +31,15 @@ npm run test:nocoverage         # Run tests without coverage (faster)
 npm test -- --testNamePattern="pattern"  # Run specific tests
 ```
 
+`packages/dynamoose/integration/` runs `Model.update` against DynamoDB Local and reads the stored
+item back raw. The unit suite blocks HTTP and checks only the request; this suite checks what
+DynamoDB accepts and stores. CI runs it. Locally:
+
+```bash
+docker run -d --rm -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -inMemory
+cd packages/dynamoose && npm run build && npm run test:integration   # DYNAMODB_ENDPOINT overrides the URL
+```
+
 **Benchmarking (in packages/dynamoose):**
 ```bash
 npm run benchmark               # Run all benchmarks
