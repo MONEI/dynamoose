@@ -862,6 +862,22 @@ const edgeCases = [
 			await ctx.step("value of address.createdAt", () => schema.getAttributeValue("address.createdAt"));
 			await save(ctx, Model, "save", {"id": "1", "address": {"street": "s", "createdAt": new Date(0)}}, {"return": "request"});
 		}
+	},
+	{
+		// The constructor writes the timestamp attributes one at a time and throws on one the definition
+		// already has, so the attributes it wrote before the throw stay in the caller's definition object.
+		"name": "timestamps schema that throws after writing into a nested definition of an earlier schema",
+		"failing": ["new timestamps schema"],
+		"run": async (ctx) => {
+			const {Schema} = ctx.dynamoose;
+			const nested = ctx.track("nested definition", {"street": String});
+			const schema = new Schema({"id": String, "address": {"type": Object, "schema": nested}});
+			const Model = ctx.model("Model", schema);
+			await save(ctx, Model, "save before", {"id": "1", "address": {"street": "s"}}, {"return": "request"});
+			await ctx.step("new timestamps schema", () => new Schema(nested, {"timestamps": {"createdAt": "created", "updatedAt": "street"}}));
+			await ctx.step("attributes after", () => schema.attributes());
+			await save(ctx, Model, "save after", {"id": "2", "address": {"street": "s", "created": new Date(5)}}, {"return": "request"});
+		}
 	}
 ];
 

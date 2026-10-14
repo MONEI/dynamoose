@@ -234,6 +234,20 @@ describe("Schema lookup cache", () => {
 		expect(request.Item.address).toEqual({"M": {"street": {"S": "s"}, "createdAt": {"N": "0"}}});
 	});
 
+	// The constructor writes the timestamp attributes one at a time, so a throw on a later one leaves the
+	// earlier ones in the caller's definition object.
+	it("Should see the timestamp attributes a constructor writes into a nested definition before it throws", async () => {
+		const nested = {"street": String};
+		const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": nested}});
+		const Cat = model("CacheTimestampsThrow", schema);
+		await Cat.create({"id": "1", "address": {"street": "s"}}, {"return": "request"});
+		expect(() => new dynamoose.Schema(nested, {"timestamps": {"createdAt": "created", "updatedAt": "street"}})).toThrow("Timestamp attributes must not be defined in schema.");
+
+		expect(schema.attributes()).toEqual(["id", "address", "address.street", "address.created"]);
+		const request = await Cat.create({"id": "2", "address": {"street": "s", "created": new Date(5)}}, {"return": "request"});
+		expect(request.Item.address).toEqual({"M": {"street": {"S": "s"}, "created": {"N": "5"}}});
+	});
+
 	// Accepted, documented difference from 4.2.4 (PENDING_CHANGELOG.md, CLAUDE.md): the constructor copies
 	// only the top level of the definition, so nested definition objects stay shared with the caller. 4.2.4
 	// sees a nested definition the caller adds or replaces after the constructor; the cache does not.

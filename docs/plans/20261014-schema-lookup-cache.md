@@ -733,6 +733,19 @@ design; keep the lockfile; leave the Task 8 bug unfixed.
   `test/SchemaCache.js`: shared THIS definition, replaced `getAttributeTypeDetails` and `getAttributeType`,
   timestamps on a nested definition. Mutation checks: each guard term, the `model` check, the throw count
   and the constructor clear each turn at least one test red
+- [x] (critical re-check 3) the constructor's clear now runs in `finally` around its writes: the
+  timestamps loop writes one attribute at a time and throws "Timestamp attributes must not be defined in
+  schema." on a later one, so a clear placed after the writes was skipped and the earlier writes stayed
+  unseen (repro: `{"createdAt": "c", "updatedAt": "x"}` on a nested definition that has `x`: 4.2.4 lists
+  `n.c` and saves it, 3024fcb8 did not and rejected the save). The note above "placed before the
+  constructor's validation, so a constructor that throws still clears" was true only for throws after the
+  writes. Corpus case and `test/SchemaCache.js` test: both pass against 4.2.4 and fail against 3024fcb8.
+  Other throw paths checked: the nested Schema loop (`saveUnknown` `.map`, `merge_objects`) can also throw
+  after a dotted `utils.object.set`, covered by the same `finally`; after the clear the constructor only
+  validates (lookups, no writes); the `Table` `ttl` loop has no throw between its writes and its clear
+- ⚠️ `Model.clearCache()` does not clear the schema lookup cache. It only matters for a user change to a
+  nested definition after the constructor (the accepted difference); recorded in CLAUDE.md and the
+  changelog
 - writes by `lib/` into definition objects, settings objects or `schemaObject` (full search of `lib/`:
   member and index assignments, `utils.object.set`, `delete`, `Object.assign`, `push`/`splice` on schema
   data):
