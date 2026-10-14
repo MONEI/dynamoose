@@ -368,9 +368,82 @@ Live `EXTRA_SCHEMA` run (common's `OperationModel` schema, `node --import tsx` f
 **Files:**
 - Modify: this plan (findings)
 
-- [ ] profile create and update on the large schema and the live Checkout schema with the cache in place
-- [ ] record the top functions and their shares in this plan, and the next candidates for a follow-up plan
+- [x] profile create and update on the large schema and the live Checkout schema with the cache in place
+- [x] record the top functions and their shares in this plan, and the next candidates for a follow-up plan
   (for example the `save` conform pass); no code change in this task
+- ⚠️ profiled the Checkout **fixture** under plain `node`, not the live schema: Task 5 showed that the live
+  schema and the fixture agree within noise in the same run, and that `--import tsx` distorts the numbers.
+  `get` was profiled too. A fixture profile under `--import tsx` locates the tsx cost (candidate 6).
+
+**Method (2026-10-14, node v24.21.0, commit b30c19bd).** `npm run benchmark -- --profile <op> <schema>`,
+current build, 5 s per profile after a 1 s warm-up, 100 µs sampling. A share is the part of the non-idle
+samples. Profiles ran at load average 11–12 on 12 cores. A first set at load average 50–94 gave the same
+ranking (example: discarded errors in checkout create 35.8% there, 33.5% here). A full benchmark run with
+`--json` (load average 15.8 at start, 12.6 at end) gave the stage numbers. Scratch scripts (not committed)
+read the `.cpuprofile` files for inclusive shares and callers, and counted lookup misses per call.
+
+**Top functions by self time**
+
+| profile         | top self functions (share)                                                                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| large create    | `js-object-utilities` `get` 10.1%, `getAttributeValue` 10.0%, `getAttributeTypeDetails` 9.8%, `circularKeys` `detect` 8.0%, `Item.js:259` tree 5.1% |
+| large get       | `getAttributeValue` 12.4%, `detect` 10.5%, `getAttributeTypeDetails` 8.2%, `get` 6.5%, `Item.js:259` 4.5%                                            |
+| large update    | `detect` 11.6%, `getAttributeValue` 8.7%, `getAttributeTypeDetails` 8.3%, `get` 7.4%, `Item.js:259` 6.8%                                             |
+| checkout create | `CustomError` 33.5%, `getAttributeTypeDetails` 6.1%, `getAttributeValue` 4.0%, `Schema.js:998` 3.9%, `get` 3.7%                                      |
+| checkout get    | `CustomError` 26.8%, `getAttributeValue` 6.9%, `getAttributeTypeDetails` 4.5%, `Schema.js:998` 4.0%, `deep_copy` 3.5%                                |
+| checkout update | `CustomError` 11.1%, `get` 8.8%, `Item.js:259` 8.1%, `getAttributeValue` 7.2%, `Item.js:257` 6.3%                                                    |
+
+**Top functions by total time** (beside `Item.objectFromSchema`, which is 61–80% everywhere)
+
+| profile         | functions (total share)                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| large create    | `toDynamo` 24.0%, `conformToSchema` 16.7%, `attributesWithSchema` 14.8%, `getAttributeTypeDetails` 13.8%, `getTypePaths` 11.3%  |
+| large get       | `conformToSchema` 28.2%, `Item` constructor (`itemify`) 16.8%, `getAttributeSettingValue` 15.4%, `object.entries` 14.6%         |
+| large update    | `attributesWithSchema` 19.7%, `object.entries` 18.6%, `isCircular` 15.2%, `conformToSchema` 13.4%                               |
+| checkout create | `getAttributeTypeDetails` 46.0%, `getTypePaths` 39.7%, `CustomError` 33.5%, `conformToSchema` 28.3%, `toDynamo` 28.0%           |
+| checkout get    | `conformToSchema` 45.4%, `getAttributeTypeDetails` 37.1%, `attributes(object)` 32.5%, `getTypePaths` 28.2%                      |
+| checkout update | `attributesWithSchema` 25.3%, `getAttributeTypeDetails` 18.5%, `attributes(object)` 18.1%, `conformToSchema` 17.9%              |
+
+`conformToSchema` and `toDynamo` are lower bounds: after an `await` inside `objectFromSchema`, the samples
+lose the parent frame.
+
+**Self time per source file** (top five)
+
+| profile         | files                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------- |
+| large create    | `Item.js` 30.3%, `Schema.js` 30.1%, `js-object-utilities/get.js` 10.1%, `circularKeys.js` 9.6%, (vm) 3.7%     |
+| large get       | `Schema.js` 33.7%, `Item.js` 26.2%, `circularKeys.js` 12.6%, `get.js` 6.5%, cjs loader 4.5%                   |
+| large update    | `Item.js` 31.4%, `Schema.js` 26.7%, `circularKeys.js` 15.1%, `get.js` 7.4%, (vm) 4.6%                         |
+| checkout create | `dynamoose-utils/Error.js` 33.5%, `Schema.js` 20.8%, `Item.js` 19.9%, `get.js` 3.7%, (vm) 3.7%                |
+| checkout get    | `Error.js` 26.8%, `Schema.js` 23.4%, `Item.js` 18.2%, cjs loader 7.4%, `deep_copy.js` 3.5%                    |
+| checkout update | `Item.js` 37.0%, `Schema.js` 22.6%, `Error.js` 11.1%, `get.js` 8.8%, (vm) 4.4%                                |
+
+**Save conform pass in create.** Time of the `save-conform` stage divided by the time of `create`, from the
+same full run: large 30.7% (950.1 vs 291.5 ops/s), extra-large 31.9% (510.3 vs 162.5), checkout 41.5% (508.4
+vs 211.1). The conform pass runs `objectFromSchema` again, so candidates 1–7 make it cheaper too. Removing it
+changes behaviour, so it is not a candidate.
+
+**AWS SDK, for context.** `@aws-sdk/util-dynamodb` (marshall, unmarshall) is 0.3–1.8% and
+`dist/aws/ddb/internal.js` is 0.8–2.1% of each profile. The stub client skips the SDK client, its
+middleware, signing and HTTP, so the 3–4 ms per call seen in prod is not in these profiles.
+
+**Next candidates for a follow-up plan** (ranked by the largest share on the Checkout fixture, the prod
+schema)
+
+| #   | candidate                                                                                                                                                                                                                                                                       | measured share                                                                                                                       | no behaviour change?                                                                                                                                                                                                                                                                 |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Discarded `UnknownAttribute` errors. `getTypePaths` (`Schema.js:788`) and the type handler in `objectFromSchema` (`Item.js:471`) call `getValueTypeCheckResult` on keys the schema does not have (`saveUnknown`). `getAttributeTypeDetails` builds an Error with a stack trace, and the caller drops it. 302 throws per checkout create, 20 per large create. | checkout create 33.5%, get 26.8%, update 11.1%; large create 3.1%, get and update 0%                                                  | Yes. Both `catch` blocks ignore the error. A probe that does not throw (the walk of `getAttributeValue`, and a throw there counts as a miss) before the call gives the same result. Misses stay uncached.                                                                            |
+| 2   | `attributesWithSchema` (`Item.js:252-262`) builds a tree from `schema.attributes()` on every call.                                                                                                                                                                              | checkout update 14.5%, create 4.1%, get 4.3%; large update 12.4%, create 9.2%, get 8.3%                                              | Yes. The tree depends only on `attributes()`, which is cached. Store the tree next to it with the same invalidation (`clearSchemaLookupCaches`). `traverse` only reads the tree.                                                                                                     |
+| 3   | `getTypePaths` runs twice per `objectFromSchema`: once in `schema.attributes(object)` (not cached, it takes an object) and once for `typeIndexOptionMap`.                                                                                                                        | `getTypePaths` total: checkout create 39.7%, get 28.2%, update 12.0%; large create 11.3% (overlaps candidate 1; the duplicate is about half) | Only under conditions. `attributes(object)` uses `{type: "toDynamo"}`, and `mapAttributes("toDynamo")` can rename keys between the two calls. Reuse is safe only on `toDynamo` passes with no mapped attribute. Medium risk. Do it after candidate 1.                              |
+| 4   | `js-object-utilities` `entries` calls `isCircular` (a full walk) on every nested object, so the cost is quadratic in depth. Used by `Item.fromDynamo` and `objectFromSchema`.                                                                                                     | large update 18.6%, get 14.6%, create 11.1%; checkout 2.8–4.4%                                                                       | Yes. On an object without a cycle, `isCircular` is always false. One cycle check on the root, then skip the checks per node only when the root has no cycle. The code is in a dependency: wrap it in dynamoose's `utils`, or fix it upstream.                                       |
+| 5   | Inline `require("./Schema")` in `Item.isDynamoObject` (`isValid`, once per value) and in the type-handler `catch` (`lib/Item.ts:92`, `789`).                                                                                                                                      | plain `node`: checkout get 9.2%, create 4.2%, update 4.1%; large 3.2–6.0%. Under `--import tsx`: checkout create 20.3%, get 35.4%   | Yes. A lazy module-level binding keeps the circular import working. This is where tsx loses its time (the Task 5 question): tsx hooks every `require` call. dd-trace in the prod Lambdas also hooks `require` (not measured), so the prod share can be higher than plain `node`.    |
+| 6   | Cache hit path of `getAttributeValue` and `getAttributeTypeDetails`: a regex key normalization (`replace(/\.\d+/gu, ".0")`), the cache fetch and a settings spread on each call. `getAttributeSettingValue` makes one lookup per setting and attribute.                          | self time of the two together: large create 19.8%, get 20.6%, update 17.0%; checkout update 11.7%, create 10.1%                      | Yes for a cheaper hit path (skip the regex when the key has no digit, normalize once per key). Fewer lookups per attribute changes the call order of user functions, so no. The gain is part of the share only.                                                                    |
+| 7   | `checkTypeFunction` (`Item.js:342`) scans `validParents` and splits keys for every item entry.                                                                                                                                                                                   | large create 6.9%, get 5.6%, update 3.4%; checkout 2.2–4.8%                                                                          | Probably yes (an index of the parents with the same match rule). Low priority.                                                                                                                                                                                                       |
+| –   | `deep_copy` of inputs and items                                                                                                                                                                                                                                                 | 1.6–3.5%                                                                                                                             | No: the copies keep caller inputs unchanged. Not a candidate.                                                                                                                                                                                                                        |
+| –   | `save` conform pass                                                                                                                                                                                                                                                             | 30.7–41.5% of create (above)                                                                                                         | No: it is behaviour (Context). It gets cheaper with candidates 1–7.                                                                                                                                                                                                                  |
+
+`js-object-utilities` `get` (3.7–10.1% self) has its callers spread over the value reads per key in
+`objectFromSchema` (`Item.js:429`, `453`, `511`, `529`, `567`, `588`). It has no single site to fix.
 
 ### Task 7: CI job that fails on a slowdown
 
