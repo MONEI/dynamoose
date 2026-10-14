@@ -1032,6 +1032,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						const defaultValue = await schema.defaultCheck(checkAttributeName, undefined, updateType.objectFromSchemaSettings);
 						if (defaultValue) {
 							subValue = defaultValue;
+							// The raw default replaces a value that may already be converted
+							alreadyConvertedValues.delete(`:v${index}`);
 							updateType = updateTypesMap.get("$SET");
 						}
 					}

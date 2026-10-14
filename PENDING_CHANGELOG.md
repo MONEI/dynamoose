@@ -13,3 +13,4 @@
 - Fixed `dynamoose.transaction` get results skipping schema `get` modifiers. Items returned from a `transactGetItems` transaction now run attribute `get` functions the same as `Model.get`, `Model.batchGet`, `Model.query`, and `Model.scan`
 - Fixed `Model.update` refusing `$REMOVE` of a nested path (`a.b`, `a[0]`) when its top-level parent is required
 - Fixed `Model.update` turning `$REMOVE` of a nested path into a `SET` of the parent's whole default value
+- Fixed `Model.update` sending a raw, unconverted value when a forced default replaces a `$SET` on a nested path
