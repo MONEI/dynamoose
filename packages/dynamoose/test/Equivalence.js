@@ -28,6 +28,15 @@ describe("Equivalence with dynamoose-baseline", () => {
 		expect(new Set(names).size).toEqual(names.length);
 	});
 
+	it("Should see a difference in an own __proto__ or constructor key and in key order", async () => {
+		// JSON.parse makes "__proto__" an own key, as a DynamoDB request or a caller input can have it.
+		const record = async (json) => (await runCase(builds.current, {"name": "snapshot", "run": (ctx) => ctx.step("value", () => JSON.parse(json))}, {})).steps;
+		expect(await record("{\"__proto__\": {\"S\": \"old\"}}")).not.toStrictEqual(await record("{\"__proto__\": {\"S\": \"new\"}}"));
+		expect(await record("{\"constructor\": {\"S\": \"old\"}}")).not.toStrictEqual(await record("{\"constructor\": {\"S\": \"new\"}}"));
+		expect(await record("{\"a\": 1, \"b\": 2}")).not.toStrictEqual(await record("{\"b\": 2, \"a\": 1}"));
+		expect(await record("{\"__proto__\": {\"S\": \"same\"}}")).toStrictEqual(await record("{\"__proto__\": {\"S\": \"same\"}}"));
+	});
+
 	it.each(corpus.map((testCase) => [testCase.name, testCase]))("%s", async (name, testCase) => {
 		const fixtures = testCase.fixtures ? testCase.fixtures() : {};
 		const baseline = await runCase(builds.baseline, testCase, fixtures);

@@ -79,7 +79,8 @@ function snapshotter (build, keyOrder) {
 		const result = {};
 		for (const key of ownKeys(value, path)) {
 			if (!skip.includes(key)) {
-				result[key] = snapshot(value[key], `${path}.${key}`);
+				// Not `result[key] =`: for "__proto__" that calls the inherited setter and adds no own key.
+				Object.defineProperty(result, key, {"value": snapshot(value[key], `${path}.${key}`), "enumerable": true, "writable": true, "configurable": true});
 			}
 		}
 		return result;
