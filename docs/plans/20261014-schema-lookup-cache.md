@@ -450,17 +450,79 @@ schema)
 **Files:**
 - Modify: `.github/workflows/ci.yml`
 - Modify: `packages/dynamoose/benchmarks/benchmark.js` (gate mode)
+- ➕ Create: `packages/dynamoose/benchmarks/gate.test.js` (gate verdict)
+- ➕ Modify: `packages/dynamoose/benchmarks/smoke.test.js` (`--gate --quick` run)
+- ➕ Modify: `packages/dynamoose/benchmarks/README.md` (`BASELINE`, CI gate)
 
-- [ ] job on `pull_request` only: build the PR and its base, run both in one process with interleaved
+- [x] job on `pull_request` only: build the PR and its base, run both in one process with interleaved
   rounds, on the Node major used by the prod Lambdas
-- [ ] gate only create and update on the large schema and the Checkout fixture; micro-benchmarks report only
-- [ ] fail only when the median slowdown is over 15% and a significance check (bootstrap or Mann-Whitney)
+- [x] gate only create, get and update on the large schema and the Checkout fixture; micro-benchmarks report
+  only (`get` added at the user's request)
+- [x] fail only when the median slowdown is over 15% and a significance check (bootstrap or Mann-Whitney)
   confirms it; on a failure, re-run once to confirm
-- [ ] on a confirmed failure, run the profile mode for the slowed operation on both builds and upload the
+- [x] on a confirmed failure, run the profile mode for the slowed operation on both builds and upload the
   summaries and `.cpuprofile` files as artifacts
-- [ ] run the job 5 times on a no-op PR: no failure; and once with a deliberate slowdown (temporary commit,
+- [x] run the job 5 times on a no-op PR: no failure; and once with a deliberate slowdown (temporary commit,
   not merged): it fails and names the function
-- [ ] lint - must pass before next task
+- [x] lint - must pass before next task
+
+**As built.** Job `benchmark-gate` in `ci.yml`, `if: github.event_name == 'pull_request'`, Node 24.x. Two
+`actions/checkout` steps: the PR merge commit to `head/`, `pull_request.base.sha` to `base/`. `npm ci` in
+both (the root `prepare` script builds every package), `npm run benchmark:smoke` in `head`, then
+`npm run benchmark -- --gate` with `BASELINE=<workspace>/base/packages/dynamoose`. `BASELINE` (new env
+var of `benchmark.js`) loads that package's `dist` in place of `dynamoose-baseline`. Third-party actions
+pinned to commit SHAs: `actions/checkout` v7.0.1, `actions/setup-node` v7.0.0, `actions/upload-artifact`
+v7.0.2 (the newest releases at least 7 days old). The job takes about 4.5 minutes.
+
+`--gate` runs the operations and stages of the large and checkout schemas, 20 interleaved rounds of
+150 ms (alternating build order, `gc()` before each measurement). A gated row (create, get, update) fails when
+the median change is below −15% and a one-sided Mann-Whitney U test (normal approximation, tie and
+continuity correction) gives p < 0.01. Failed rows run again (20 new rounds, same process). A row that
+fails twice is profiled on both builds (5 s each): `.cpuprofile` and summary per build, plus a comparison
+of self time per call per function (matched by name and path inside the build). The log prints the
+comparison, and the job uploads the directory as artifact `benchmark-gate` (`if: failure()`).
+
+- ⚠️ the user asked to gate `get` too (after the first CI round below): `get` on large and checkout has the
+  same rules as create and update (commit c2adaca2). All checks ran again with `get` gated.
+
+**Results with `get` gated (2026-10-14, commit c2adaca2).**
+
+- Draft PR https://github.com/MONEI/dynamoose/pull/21 (this branch against `main`), gate passes, all CI
+  jobs green: https://github.com/MONEI/dynamoose/actions/runs/38590212343/job/115942772895. Against `main`
+  (no cache): large create +158.0%, get +172.6%, update +174.2%; checkout create +74.5%, get +107.0%,
+  update +175.9%.
+- No-op PR https://github.com/MONEI/dynamoose/pull/24 (empty commit on this branch, base this branch;
+  closed, branch deleted), 5 runs of run https://github.com/MONEI/dynamoose/actions/runs/38590228927, no
+  failure and no re-run triggered. Gated changes (large create, get, update; checkout create, get, update):
+
+  | attempt | job                                                                         | changes                                    | lowest p |
+  | ------- | --------------------------------------------------------------------------- | ------------------------------------------ | -------: |
+  | 1       | https://github.com/MONEI/dynamoose/actions/runs/38590228927/job/115942831063 | −0.3%, −1.5%, −1.5%, −1.6%, +1.1%, −1.9%   |    0.067 |
+  | 2       | https://github.com/MONEI/dynamoose/actions/runs/38590228927/job/115946364291 | +0.3%, +1.5%, +0.8%, +0.1%, +0.4%, −0.2%   |     0.22 |
+  | 3       | https://github.com/MONEI/dynamoose/actions/runs/38590228927/job/115948832331 | −0.2%, −0.3%, +0.8%, +1.2%, +1.6%, +0.7%   |     0.40 |
+  | 4       | https://github.com/MONEI/dynamoose/actions/runs/38590228927/job/115951721967 | −0.6%, +2.1%, +0.4%, +0.3%, +0.0%, −0.7%   |     0.16 |
+  | 5       | https://github.com/MONEI/dynamoose/actions/runs/38590228927/job/115953986525 | +1.2%, −1.4%, +1.4%, −3.0%, +1.4%, +1.0%   |    0.048 |
+
+- Slowdown PR https://github.com/MONEI/dynamoose/pull/25 (a busy loop at the top of
+  `getAttributeTypeDetails` in `lib/Schema.ts`, only on the temporary branch; closed, branch deleted, never
+  merged): the gate fails, https://github.com/MONEI/dynamoose/actions/runs/38590239298/job/115942870478.
+  All six gated rows −86% to −93% with p = 3.4e-8 in both runs. The comparison names
+  `Schema.getAttributeTypeDetails dist/Schema.js` first for each row (large get: 207 → 22,328 µs/call self
+  time; the next function grows 95 µs/call). Artifact `benchmark-gate` (711 kB, 12 `.cpuprofile`, 12
+  summaries, 6 comparisons) uploaded.
+
+**First CI round, create and update gated (commit 66f705fa).** Main PR run
+https://github.com/MONEI/dynamoose/actions/runs/38586201882 green. No-op PR
+https://github.com/MONEI/dynamoose/pull/22, 5 runs of https://github.com/MONEI/dynamoose/actions/runs/38586264370:
+no failure, gated changes within −2.7% to +2.4% (lowest p 0.0013); `get`, then report only, within ±2.2%.
+Slowdown PR https://github.com/MONEI/dynamoose/pull/23,
+https://github.com/MONEI/dynamoose/actions/runs/38586274645/job/115929008243: failed, named
+`Schema.getAttributeTypeDetails`. Both PRs closed and their branches deleted.
+
+- ⚠️ the p-value alone is not enough on these runners: identical code reached p = 0.0013 and 0.0077 at
+  −2.7% and −1.7% (first round, attempts 5 and 1), so the 15% threshold does the work against small shifts and the
+  test against wide noise. Runner speed differs about 2x between attempts (large create 137 vs 263 ops/s),
+  so only in-process comparisons are valid.
 
 ### Task 8: Confirm the suspected `attributeTypeCache` bug (report only)
 
