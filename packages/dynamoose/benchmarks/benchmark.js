@@ -3,12 +3,14 @@
 // the network. Usage: node --expose-gc benchmarks/benchmark.js [--quick] [--json <file>]
 // Profile one operation or stage: node --expose-gc benchmarks/benchmark.js --profile <name> <schema>
 // [--build current|baseline] [--out <file>] [--quick]
+// EXTRA_SCHEMA=<module> adds one more schema, in the shape of fixtures/checkout-schema.js.
 const fs = require("fs");
 const inspector = require("inspector");
 const path = require("path");
 const {performance} = require("perf_hooks");
 const {promisify} = require("util");
 const {createSmallSchema, createMediumSchema, createLargeSchema, createExtraLargeSchema} = require("./schemas");
+const checkout = require("./fixtures/checkout-schema");
 
 // Test data generators for different schema types
 function generateTestData (schemaType) {
@@ -367,8 +369,16 @@ const schemas = {
 		"key": compositeKey,
 		"update": () => ({"personalInfo": {...generateTestData("extra-large").personalInfo, "firstName": "Updated"}}),
 		"nestedUpdate": () => ({"$SET": {"personalInfo.firstName": "Updated"}})
-	}
+	},
+	[checkout.name]: checkout
 };
+if (process.env.EXTRA_SCHEMA) {
+	const extra = require(path.resolve(process.env.EXTRA_SCHEMA));
+	if (!extra.name || schemas[extra.name]) {
+		throw new Error(`EXTRA_SCHEMA must export a "name" that is not taken, got "${extra.name}"`);
+	}
+	schemas[extra.name] = extra;
+}
 
 // Each operation gets a fresh input from `prepare` (not timed), then `run` is timed.
 const operations = {

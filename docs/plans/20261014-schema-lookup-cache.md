@@ -193,18 +193,63 @@ Benchmark (`packages/dynamoose/benchmarks/benchmark.js`):
 **Files:**
 - Create: `packages/dynamoose/benchmarks/fixtures/checkout-schema.js`
 - Modify: `packages/dynamoose/benchmarks/benchmark.js`
+- ➕ Modify: `packages/dynamoose/benchmarks/smoke.test.js` (checkout rows, EXTRA_SCHEMA run)
+- ➕ Modify: `packages/dynamoose/benchmarks/README.md` (checkout schema, EXTRA_SCHEMA with an example module)
 
-- [ ] generate the fixture once from `@monei/common` `CheckoutModel` (its dynamoose schema from
+- [x] generate the fixture once from `@monei/common` `CheckoutModel` (its dynamoose schema from
   `toDynamooseSchema`): types, nesting, `required`, `enum`, `saveUnknown`, storage settings; function
   `default`s replaced by equivalent plain functions where possible
-- [ ] header comment: how the fixture was made and which function settings it lacks (it underestimates prod;
+- [x] header comment: how the fixture was made and which function settings it lacks (it underestimates prod;
   decisions use the live run below, CI uses the fixture)
-- [ ] realistic Checkout test data (shape of a real checkout, no real customer data)
-- [ ] `EXTRA_SCHEMA=<path to module>` hook, so a run from common benchmarks the live `CheckoutModel` schema
-- [ ] extend the smoke test to cover the fixture
-- [ ] record baseline numbers in this plan: current `main` vs `dynamoose-baseline`, and fork vs upstream for
+- [x] realistic Checkout test data (shape of a real checkout, no real customer data)
+- [x] `EXTRA_SCHEMA=<path to module>` hook, so a run from common benchmarks the live `CheckoutModel` schema
+- [x] extend the smoke test to cover the fixture
+- [x] record baseline numbers in this plan: current `main` vs `dynamoose-baseline`, and fork vs upstream for
   reference
-- [ ] `npm run build`, smoke test, unit suite, lint - must pass before next task
+- [x] `npm run build`, smoke test, unit suite, lint - must pass before next task
+- ⚠️ common has no `CheckoutModel`. The model of `monei-<stage>-checkoutsTable` is `OperationModel`
+  (`createModel('checkouts', operationSchema)`). The fixture is its schema, from common 11.9.0 (34fde00c).
+  The only function `default` (`createdAt`) is dropped by `toDynamooseSchema` (timestamps are on); the
+  replaced functions are the 20 `validate` and one `set`, all zod `safeParse` wrappers. A script checked
+  that the fixture's definition and settings equal common's output (functions aside, key order included)
+  and that each plain function returns what the zod one returns on sample values.
+
+**Baseline numbers (2026-10-14, node v24.21.0, full run: 10 rounds of 200 ms, medians in ops/s)**
+
+Current `main` (4.2.4 dist) vs `dynamoose-baseline` 4.2.4, load average 4.7 at start, 4.5 at end. Same
+code on both sides, so the change column is the noise floor: within ±2.4%, except `small get` −6.8%.
+
+| schema      | operation      | baseline | current | change |
+| ----------- | -------------- | -------: | ------: | -----: |
+| large       | create         |    122.1 |   121.6 |  −0.4% |
+| large       | create-request |    126.8 |   126.7 |  −0.0% |
+| large       | get            |    255.9 |   256.3 |  +0.1% |
+| large       | update         |    150.4 |   150.2 |  −0.1% |
+| large       | update-nested  |    165.1 |   168.3 |  +1.9% |
+| extra-large | create         |     73.6 |    73.4 |  −0.2% |
+| extra-large | update         |     87.7 |    87.8 |  +0.1% |
+| checkout    | create         |    140.9 |   141.4 |  +0.3% |
+| checkout    | create-request |    143.6 |   145.3 |  +1.2% |
+| checkout    | get            |    311.4 |   316.4 |  +1.6% |
+| checkout    | update         |     96.1 |    96.0 |  −0.0% |
+| checkout    | update-nested  |    152.0 |   155.6 |  +2.4% |
+
+Fork 4.2.4 vs upstream `dynamoose` 4.2.0 (reference only; upstream installed in a scratch directory,
+not a dependency), load average 4.3 at start, 6.1 at end:
+
+| schema      | operation     | upstream | fork  | change |
+| ----------- | ------------- | -------: | ----: | -----: |
+| large       | create        |    195.3 | 124.7 | −36.1% |
+| large       | get           |    223.3 | 264.3 | +18.4% |
+| large       | update        |    129.3 | 150.1 | +16.1% |
+| extra-large | create        |    118.8 |  75.2 | −36.7% |
+| extra-large | update        |     76.9 |  89.0 | +15.6% |
+| checkout    | create        |    223.0 | 142.1 | −36.3% |
+| checkout    | get           |    242.6 | 311.5 | +28.4% |
+| checkout    | update        |     81.8 |  95.3 | +16.5% |
+| checkout    | update-nested |    118.1 | 158.9 | +34.5% |
+
+The create gap to upstream is the `save` conform pass (Context); update and get are faster on the fork.
 
 ### Task 4: Live equivalence suite against 4.2.4
 

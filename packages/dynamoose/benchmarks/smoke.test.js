@@ -34,13 +34,18 @@ describe("benchmark --quick", () => {
 			"extra-large create-request",
 			"extra-large get",
 			"extra-large update",
-			"extra-large update-nested"
+			"extra-large update-nested",
+			"checkout create",
+			"checkout create-request",
+			"checkout get",
+			"checkout update",
+			"checkout update-nested"
 		]);
 	});
 
 	it("reports every stage of every schema", () => {
 		const stages = ["getAttributeValue", "getAttributeTypeDetails", "attributes", "getTypePaths", "objectFromSchema-toDynamo", "objectFromSchema-fromDynamo", "save-conform"];
-		const schemas = ["small", "medium", "large", "extra-large"];
+		const schemas = ["small", "medium", "large", "extra-large", "checkout"];
 		expect(output.stages.map((result) => `${result.schema} ${result.operation}`)).toEqual(schemas.flatMap((schema) => stages.map((stage) => `${schema} ${stage}`)));
 	});
 
@@ -79,5 +84,18 @@ describe("benchmark --profile", () => {
 		expect(section("top functions by self time")).toMatch(/ dist\/Schema\.js:\d+/);
 		expect(section("top functions by total time")).toMatch(/Item\.objectFromSchema +dist\/Item\.js:\d+/);
 		expect(section("self time per file")).toMatch(/ dist\/Schema\.js$/m);
+	});
+});
+
+// The live run of common's schema goes through EXTRA_SCHEMA; a module it cannot load must not pass
+// unnoticed as a run without that schema.
+describe("benchmark EXTRA_SCHEMA", () => {
+	it("runs an operation on the extra schema", () => {
+		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-extra-"));
+		const moduleFile = path.join(directory, "extra.js");
+		fs.writeFileSync(moduleFile, `module.exports = {...require(${JSON.stringify(path.join(__dirname, "fixtures", "checkout-schema.js"))}), "name": "extra"};`);
+		const stdout = execFileSync(process.execPath, ["--expose-gc", path.join(__dirname, "benchmark.js"), "--profile", "create-request", "extra", "--quick", "--out", path.join(directory, "extra.cpuprofile")], {"encoding": "utf8", "env": {...process.env, "EXTRA_SCHEMA": moduleFile}});
+		fs.rmSync(directory, {"recursive": true});
+		expect(stdout).toMatch(/^create-request on extra, current build /);
 	});
 });

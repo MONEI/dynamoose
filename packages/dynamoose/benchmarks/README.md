@@ -19,6 +19,7 @@ npm run benchmark -- --json results.json           # also write the results as J
 npm run benchmark:smoke                            # jest: --quick and --profile work for every operation
 npm run benchmark -- --profile update large        # CPU profile of one operation or stage
 npm run benchmark -- --profile create large --build baseline --out create.cpuprofile
+EXTRA_SCHEMA=path/to/module.js npm run benchmark  # also run one more schema, see below
 ```
 
 The script needs `node --expose-gc`; the npm script passes it.
@@ -83,3 +84,45 @@ Schema instance.
   `required` and `default` settings.
 - **extra-large**: large plus sets, `Buffer`, a multi-type attribute, `NULL` and a Date `storage`
   setting.
+- **checkout**: `fixtures/checkout-schema.js`, the schema of `@monei/common` `OperationModel` (the
+  `checkouts` table), generated once from common. Its header comment says how, and which function
+  settings it replaces with plain functions. The data is a confirmed card payment with invented values.
+
+## Live schema from `@monei/common` (EXTRA_SCHEMA)
+
+The fixture lacks the cost of common's zod-backed `validate` functions. To measure the real schema,
+set `EXTRA_SCHEMA` to a module that exports one schema in the shape of the fixture (`name`, `create`,
+`data`, `key`, `update`, optional `nestedUpdate`). `name` must differ from the built-in schemas. Run
+it from a checkout of common with `tsx`, so the module can import common's TypeScript source:
+
+```ts
+// live-checkout.ts, next to a checkout of common
+import {operationSchema} from './src/models/OperationModel';
+import {extractTimestamps, toSchemaDef} from './src/zod/converter';
+import {dynamoose as commonDynamoose} from './src/utils/dynamoose';
+const fixture = require('<dynamoose>/packages/dynamoose/benchmarks/fixtures/checkout-schema.js');
+
+// common's dynamoose.type symbols are not the symbols of the benchmarked builds.
+const remap = (value: any, types: any): any => {
+  for (const name of ['NULL', 'ANY', 'THIS']) if (value === commonDynamoose.type[name]) return types[name];
+  if (Array.isArray(value)) return value.map((v) => remap(v, types));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, remap(v, types)]));
+  return value;
+};
+
+module.exports = {
+  ...fixture,
+  name: 'checkout-live',
+  create: (dynamoose: any) => {
+    const {schema, saveUnknown} = toSchemaDef(operationSchema as any);
+    const {createdAt, updatedAt, ...definition} = schema as any; // what toDynamooseSchema omits
+    return new dynamoose.Schema(remap(definition, dynamoose.type), {saveUnknown, timestamps: extractTimestamps(operationSchema as any)});
+  }
+};
+```
+
+```bash
+# In the checkout of common (the env values are the ones of vitest.config.ts)
+STAGE=dev PROJECT=monei AWS_REGION=us-east-1 POWERTOOLS_LOG_LEVEL=SILENT EXTRA_SCHEMA=live-checkout.ts \
+  node --expose-gc --import tsx <dynamoose>/packages/dynamoose/benchmarks/benchmark.js
+```
