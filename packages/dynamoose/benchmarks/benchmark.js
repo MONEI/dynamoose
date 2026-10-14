@@ -720,6 +720,9 @@ async function main (args) {
 	}
 }
 
+// The equivalence suite (equivalence/corpus.js) reuses the schema configs and their test data.
+module.exports = {schemas};
+
 if (require.main === module) {
 	main(process.argv.slice(2)).catch((error) => {
 		console.error(error);

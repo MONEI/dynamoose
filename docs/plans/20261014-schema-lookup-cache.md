@@ -257,22 +257,31 @@ The create gap to upstream is the `save` conform pass (Context); update and get 
 - Create: `packages/dynamoose/equivalence/corpus.js`
 - Create: `packages/dynamoose/equivalence/compare.js`
 - Create: `packages/dynamoose/test/Equivalence.js`
+- ➕ Modify: `packages/dynamoose/benchmarks/benchmark.js` (exports the schema configs the corpus reuses)
 
-- [ ] `compare.js`: runs one case through a given build and returns everything listed in Testing Strategy
+- [x] `compare.js`: runs one case through a given build and returns everything listed in Testing Strategy
   (request, returned item, instance state, input object after the call, user function call log, error kind)
-- [ ] corpus: the benchmark schemas, the Checkout fixture, and edge schemas: multi-type attributes, an array
+- [x] corpus: the benchmark schemas, the Checkout fixture, and edge schemas: multi-type attributes, an array
   of attribute definitions (`[{type: Object, schema: A}, {type: Object, schema: B}]`), `[T, NULL]` as
   common emits it, sets, lists of maps, Combine incl. key, `forceDefault`, function `default`, `get`/`set`
   modifiers, `validate`, `enum`, `saveUnknown` paths, Date storages, nested paths and list indices,
   Table `expires`, `dynamoose.type.THIS`, Model-typed attributes, a model with several schemas, alias/map,
   `readStrict: false`, timestamps, Constant, ANY, a nested Schema instance, `$ADD`/`$REMOVE`/`$DELETE`,
   transactions, and sequences of calls on the same model
-- [ ] operations per schema: create, `save()` and `save({return: "request"})`, update top-level and nested,
+- [x] operations per schema: create, `save()` and `save({return: "request"})`, update top-level and nested,
   `get`, `query`; include inputs that fail validation, and several invalid fields at once
-- [ ] `test/Equivalence.js`: for every case, run baseline and current, compare with `toStrictEqual` and an
+- [x] `test/Equivalence.js`: for every case, run baseline and current, compare with `toStrictEqual` and an
   explicit key order check; fake timers for clock-dependent cases
-- [ ] check that the suite catches a change: a temporary edit in `lib` (not committed) makes it fail
-- [ ] `npm run build`, unit suite incl. equivalence, lint - must pass before next task
+- [x] check that the suite catches a change: a temporary edit in `lib` (not committed) makes it fail
+- [x] `npm run build`, unit suite incl. equivalence, lint - must pass before next task
+- ⚠️ the corpus pins these 4.2.4 behaviours as failing steps (not fixed here, they are behaviour): `$SET` on
+  a list index (`tags.1`, `lines.0.meta.color`) rejects with "Expected tags to be of type array"; a `Set`
+  of `Date` rejects with `val.map is not a function`; a `saveUnknown` key named `constructor` rejects (nested)
+  or fails to marshall (top level); a `default` inside one definition of an array of definitions is applied
+  whichever definition the item matches.
+- the suite was checked against two temporary edits in `lib/Schema.ts` (reverted, never committed): a cache of
+  `getAttributeValue` keyed by path only fails 3 cases (array of definitions, multi-type, extra-large); a
+  memoized function `default` fails the defaults case.
 
 ### Task 5: Cache schema lookups per Schema instance
 
