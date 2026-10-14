@@ -20,4 +20,4 @@
 - Fixed `Model.update` typing a value by another attribute's schema when a `$REMOVE` or nested path came before it, for example writing a list as a string set
 - Fixed `Model.update` treating a nested path component as the top-level attribute of the same name, for combine sources and forced defaults
 - Fixed `Model.update` throwing "all or none of the combine attributes" when the update writes none of them
-- Fixed `Model.update` writing `NULL` for a nested key the schema does not describe (a key inside a schemaless `Object`, or one the schema does not declare); it is written as it is again
+- Fixed `Model.update` writing `NULL` for a nested key the schema drops (not declared and not covered by `saveUnknown`, also inside a schemaless `Object`); the path is skipped, as a full write of the parent drops the key
