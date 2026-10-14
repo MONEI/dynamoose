@@ -1,3 +1,4 @@
+// Schemas of the benchmark, also used by the equivalence corpus (equivalence/corpus.js).
 const checkout = require("./fixtures/checkout-schema");
 
 // Small schema for baseline comparison

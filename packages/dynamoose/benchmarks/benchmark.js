@@ -22,6 +22,7 @@ const builds = {
 	"baseline": loadBuild(process.env.BASELINE ? path.resolve(process.env.BASELINE) : publishedBaselineDirectory),
 	"current": loadBuild(currentDirectory)
 };
+const currentScale = process.env.BENCHMARK_SCALE_CURRENT ? Number(process.env.BENCHMARK_SCALE_CURRENT) : 1;
 
 if (process.env.EXTRA_SCHEMA) {
 	const extra = require(path.resolve(process.env.EXTRA_SCHEMA));
@@ -170,7 +171,7 @@ async function run (suites, {rounds, roundMs, warmupMs}) {
 		for (const [index, suite] of suites.entries()) {
 			for (const buildName of order) {
 				global.gc();
-				const scale = buildName === "current" && process.env.BENCHMARK_SCALE_CURRENT ? Number(process.env.BENCHMARK_SCALE_CURRENT) : 1;
+				const scale = buildName === "current" ? currentScale : 1;
 				samples[index][buildName].push(await measure(suite, buildName, roundMs) * scale);
 			}
 		}
@@ -416,6 +417,8 @@ async function main (args) {
 	}
 	const quick = args.includes("--quick");
 	const option = (flag) => args.includes(flag) ? args[args.indexOf(flag) + 1] : undefined;
+	const quickSettings = {"rounds": 2, "roundMs": 20, "warmupMs": 20};
+	const profileSettings = quick ? {"warmupMs": 50, "durationMs": 300} : {"warmupMs": 1000, "durationMs": 5000};
 	const profileIndex = args.indexOf("--profile");
 	if (profileIndex !== -1) {
 		const [name, schema] = args.slice(profileIndex + 1, profileIndex + 3);
@@ -424,8 +427,7 @@ async function main (args) {
 			name,
 			schema,
 			buildName,
-			"warmupMs": quick ? 50 : 1000,
-			"durationMs": quick ? 300 : 5000,
+			...profileSettings,
 			"outFile": option("--out") || `${buildName}-${schema}-${name}.cpuprofile`
 		});
 		return;
@@ -435,14 +437,14 @@ async function main (args) {
 		if (!process.env.BASELINE) {
 			throw new Error("--gate needs BASELINE=<package directory of the base build>");
 		}
-		const settings = quick ? {"rounds": 2, "roundMs": 20, "warmupMs": 20} : {"rounds": 20, "roundMs": 150, "warmupMs": 300};
+		const settings = quick ? quickSettings : {"rounds": 20, "roundMs": 150, "warmupMs": 300};
 		if (option("--rounds")) {
 			settings.rounds = Number(option("--rounds"));
 		}
 		console.log(`baseline ${builds.baseline.directory} vs current ${builds.current.directory}, node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
 		const passed = await runGate({
 			settings,
-			"profileSettings": quick ? {"warmupMs": 50, "durationMs": 300} : {"warmupMs": 1000, "durationMs": 5000},
+			profileSettings,
 			"artifactsDirectory": option("--artifacts") || "benchmark-gate"
 		});
 		if (!passed) {
@@ -450,8 +452,8 @@ async function main (args) {
 		}
 		return;
 	}
-	const jsonIndex = args.indexOf("--json");
-	const settings = quick ? {"rounds": 2, "roundMs": 20, "warmupMs": 20} : {"rounds": 10, "roundMs": 200, "warmupMs": 500};
+	const jsonFile = option("--json");
+	const settings = quick ? quickSettings : {"rounds": 10, "roundMs": 200, "warmupMs": 500};
 
 	console.log(`baseline ${builds.baseline.version} vs current ${builds.current.version} (dist), node ${process.version}, ${settings.rounds} rounds of ${settings.roundMs} ms`);
 	const all = await run(await setup(), settings);
@@ -460,9 +462,9 @@ async function main (args) {
 	printTable(results, "operation");
 	console.log("\nstages (report only)");
 	printTable(stageResults, "stage");
-	if (jsonIndex !== -1) {
+	if (jsonFile) {
 		const output = {"node": process.version, "builds": {"baseline": builds.baseline.version, "current": builds.current.version}, ...settings, results, "stages": stageResults};
-		fs.writeFileSync(args[jsonIndex + 1], JSON.stringify(output, null, "\t"));
+		fs.writeFileSync(jsonFile, JSON.stringify(output, null, "\t"));
 	}
 }
 

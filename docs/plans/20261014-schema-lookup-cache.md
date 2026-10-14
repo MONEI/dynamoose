@@ -810,6 +810,22 @@ Same as run C within noise: the guard and the `model` check cost nothing measura
 schema has a THIS or Model attribute. Every operation on every schema is faster (smallest: checkout create
 +49.5%); checkout `getTypePaths` stage -4.8% (not covered by the cache, noise level).
 
+**Code smell review (pure refactors, no behaviour change)**
+
+- [x] `getSharedAttributeTypeDetails` and `clearSchemaLookupCaches` are no longer exported from
+  `Schema.ts` (the `@internal` tag had no effect, `stripInternal` is not set). `lib/` reaches them through
+  the schema's internal properties: `getSharedAttributeTypeDetails(key, settings?)` and
+  `clearAllLookupCaches()` (drops every schema's cache). The Table `ttl` loop calls it per schema, right
+  after its write; the Schema constructor calls the module function in `finally`
+- [x] all cache state, types and helpers are in one block at the end of `Schema.ts`; one `standardizeKey`
+  helper and one `AttributeLookupSettings` type for the new code (the 4.2.4 signatures stay as they are)
+- [x] the `getLookupCache(schema) === cache` term is gone: the epoch only grows, so a cache object from an
+  earlier epoch is never read again, and a write into it has no effect
+- [x] constructor writes are a local `parseDefinition` function called in a short `try`/`finally`
+- [x] control run (current build against a copy of itself): small `get`/`update` -6%, the same gap as
+  current against the previous commit, so it comes from the harness, not the change; large, extra-large
+  and checkout rows within noise
+
 ## Post-Completion
 
 *Items requiring manual intervention or external systems - informational only*

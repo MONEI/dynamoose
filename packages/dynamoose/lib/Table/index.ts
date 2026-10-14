@@ -6,7 +6,7 @@ import {Model} from "../Model";
 import {custom as customDefaults, original as originalDefaults} from "./defaults";
 import utils from "../utils";
 import * as DynamoDB from "@aws-sdk/client-dynamodb";
-import {IndexItem, TableIndex, clearSchemaLookupCaches} from "../Schema";
+import {IndexItem, TableIndex} from "../Schema";
 import {Item as ItemCarrier} from "../Item";
 import {createTable, createTableRequest, updateTable, updateTimeToLive, waitForActive} from "./utilities";
 import {TableClass} from "./types";
@@ -289,9 +289,9 @@ export class Table extends InternalPropertiesClass<TableInternalProperties> {
 						return typeof ttl === "number" ? new Date(Date.now() + ttl) : undefined;
 					}
 				};
+				// A write into a built schema: the lookups cached until now lack the ttl attribute.
+				schema.getInternalProperties(internalProperties).clearAllLookupCaches();
 			});
-			// A write into a built schema: the lookups cached until now lack the ttl attribute.
-			clearSchemaLookupCaches();
 		}
 
 		if (options.initialize === undefined || options.initialize === true) {

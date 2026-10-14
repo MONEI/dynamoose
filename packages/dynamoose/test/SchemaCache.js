@@ -19,8 +19,8 @@ describe("Schema lookup cache", () => {
 		expect(lookupCache(schema).values.has("lines.3.sku")).toEqual(false);
 	});
 
-	// attributes() returned a new array on every call before the cache; a caller that changes the
-	// array must not change the next result.
+	// attributes() returns a new array on every call: a caller that changes the array must not change
+	// the next result.
 	it("Should return a new attributes array on every call", () => {
 		const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": {"city": String}}});
 		const first = schema.attributes();
@@ -130,7 +130,7 @@ describe("Schema lookup cache", () => {
 	describe("Keys named like Object.prototype members", () => {
 		const schema = () => new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": {"city": String}}}, {"saveUnknown": true});
 
-		it("Should resolve constructor through the attributes object, as without the cache", () => {
+		it("Should resolve constructor through the attributes object", () => {
 			const value = schema();
 			expect(value.getAttributeValue("constructor")).toBe(Object);
 			expect(value.getAttributeValue("address.constructor")).toBe(Object);
@@ -138,7 +138,7 @@ describe("Schema lookup cache", () => {
 			expect(value.getAttributeValue("constructor")).toBe(Object);
 		});
 
-		it("Should resolve __proto__ through the attributes object, as without the cache", () => {
+		it("Should resolve __proto__ through the attributes object", () => {
 			const value = schema();
 			expect(value.getAttributeValue("__proto__")).toBe(Object.prototype);
 			expect(() => value.getAttributeTypeDetails("__proto__")).toThrow(TypeError);
