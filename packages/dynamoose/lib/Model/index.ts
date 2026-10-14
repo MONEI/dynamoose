@@ -822,8 +822,19 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// A nested value goes through the schema the same way a top-level one does: wrap it in the
 		// object its path describes, convert that, and read the value back. Every list index maps to
 		// element 0, since all elements of a list share one schema. Required is checked separately,
-		// on the path itself, because the wrapper lacks the siblings of the value.
+		// on the path itself, because the wrapper lacks the siblings of the value. A path the schema
+		// does not describe (a key inside a schemaless Object, or one the schema does not declare) is
+		// written as it is: the schema would drop it, and the dropped value would be written as NULL.
 		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => {
+			let isDescribed: boolean;
+			try {
+				isDescribed = Boolean(schema.getAttributeValue(path.replace(/\[(\d+)\]/gu, ".$1")));
+			} catch (e) {
+				isDescribed = false;
+			}
+			if (!isDescribed) {
+				return awsConverter().convertToAttr(value);
+			}
 			const segments = parsePathWithArrayIndices(path);
 			const wrapped = segments.reduceRight((child, segment) => segment.type === "index" ? [child] : {[segment.value]: child}, value as any);
 			const converted = await this.Item.objectFromSchema(wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false} as any);

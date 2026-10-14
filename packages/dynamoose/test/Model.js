@@ -3209,6 +3209,31 @@ describe("Model", () => {
 					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.count": -1}})).rejects.toThrow("meta.count with a value of -1 had a validation error when trying to save the item");
 				});
 
+				it("Should throw error for nested $SET value of the wrong type", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"count": Number}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.count": "abc"}})).rejects.toThrow("Expected meta.count to be of type number, instead found type string.");
+				});
+
+				it("Should write a nested key inside a schemaless Object as it is", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": Object});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"data.anything": {"n": 1}}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"n": {"N": "1"}}}});
+				});
+
+				it("Should write a nested key the schema does not declare as it is", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.extra.deep": 1}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1.#a2 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "1"}});
+				});
+
 				it("Should apply a nested set modifier", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": {"type": String, "set": (val) => val.toUpperCase()}}}});
