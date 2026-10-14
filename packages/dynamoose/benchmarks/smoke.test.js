@@ -89,11 +89,11 @@ describe("benchmark --profile", () => {
 
 // The CI gate runs this mode; two quick rounds can never reach significance, so it must pass.
 describe("benchmark --gate", () => {
-	it("gates create and update on large and checkout, the rest report only", () => {
+	it("gates create, get and update on large and checkout, the rest report only", () => {
 		const stdout = execFileSync(process.execPath, ["--expose-gc", path.join(__dirname, "benchmark.js"), "--gate", "--quick"], {"encoding": "utf8"});
 		const table = (title) => stdout.split(`${title}\n`)[1].split("\n\n")[0].trimEnd().split("\n").slice(1).map((line) => line.split(/ +/u).slice(0, 2).join(" "));
-		expect(table("confirmed by a second run")).toEqual(["large create", "large update", "checkout create", "checkout update"]);
-		expect(table("operations (report only)")).toEqual(["large create-request", "large get", "large update-nested", "checkout create-request", "checkout get", "checkout update-nested"]);
+		expect(table("confirmed by a second run")).toEqual(["large create", "large get", "large update", "checkout create", "checkout get", "checkout update"]);
+		expect(table("operations (report only)")).toEqual(["large create-request", "large update-nested", "checkout create-request", "checkout update-nested"]);
 		const stages = ["getAttributeValue", "getAttributeTypeDetails", "attributes", "getTypePaths", "objectFromSchema-toDynamo", "objectFromSchema-fromDynamo", "save-conform"];
 		expect(table("stages (report only)")).toEqual(["large", "checkout"].flatMap((schema) => stages.map((stage) => `${schema} ${stage}`)));
 		expect(stdout).not.toMatch(/SLOWER/u);

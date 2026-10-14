@@ -83,7 +83,7 @@ both, runs `npm run benchmark:smoke`, then `npm run benchmark -- --gate` with `B
 base checkout.
 
 `--gate` runs the operations and stages of the large and checkout schemas, 20 interleaved rounds of
-150 ms. Only `create` and `update` on these two schemas can fail the job. All other rows are report
+150 ms. Only `create`, `get` and `update` on these two schemas can fail the job. All other rows are report
 only. A gated operation fails when both are true:
 
 - its median ops/s is more than 15% below the base

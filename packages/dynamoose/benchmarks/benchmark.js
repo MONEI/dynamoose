@@ -719,7 +719,7 @@ async function profile ({name, schema, buildName, warmupMs, durationMs, outFile}
 // and still there in a second run. All other operations and the stages are report only.
 const gate = {
 	"schemas": ["large", "checkout"],
-	"operations": ["create", "update"],
+	"operations": ["create", "get", "update"],
 	"maxSlowdownPercent": 15,
 	"alpha": 0.01
 };
