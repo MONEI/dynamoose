@@ -649,11 +649,11 @@ times higher, and the other large rows match Task 5 within that spread.
 
 ### Task 10: Update documentation
 
-- [ ] update `CLAUDE.md` (fork): benchmark usage, profile mode, the CI gate, the equivalence suite, and the
+- [x] update `CLAUDE.md` (fork): benchmark usage, profile mode, the CI gate, the equivalence suite, and the
   cache rules (one post-construction write at `Table/index.ts`, misses not cached, values not copied or
   frozen)
-- [ ] update `packages/dynamoose/benchmarks/README.md` with the measured numbers
-- [ ] add a `PENDING_CHANGELOG.md` entry (performance, no behaviour change)
+- [x] update `packages/dynamoose/benchmarks/README.md` with the measured numbers
+- [x] add a `PENDING_CHANGELOG.md` entry (performance, no behaviour change)
 
 ## Post-Completion
 

@@ -40,10 +40,16 @@ docker run -d --rm -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -in
 cd packages/dynamoose && npm run build && npm run test:integration   # DYNAMODB_ENDPOINT overrides the URL
 ```
 
-**Benchmarking (in packages/dynamoose):**
+**Benchmarking (in packages/dynamoose, after `npm run build`):**
 ```bash
-npm run benchmark               # Current dist vs dynamoose-baseline (see benchmarks/README.md)
+npm run benchmark                              # Current dist vs dynamoose-baseline, full run (about 4 min)
+npm run benchmark -- --quick                   # Short rounds, noisy numbers
+npm run benchmark -- --profile update large    # CPU profile of one operation or stage
+npm run benchmark:smoke                        # jest: every mode still runs
+EXTRA_SCHEMA=path/to/module.js npm run benchmark   # Add one schema, e.g. common's live Checkout schema
 ```
+
+See "Performance work" below and `packages/dynamoose/benchmarks/README.md` for details.
 
 **Linting:**
 ```bash
@@ -143,6 +149,39 @@ The Schema system supports:
 - Main documentation lives in `docs/docs_src/`
 - Update `PENDING_CHANGELOG.md` when making changes
 - Some docs use replaceable JSDoc patterns like `dyno_jsdoc_dist/Model/index.js|model.table`
+
+**Performance work:**
+
+- Benchmark: `benchmarks/benchmark.js` loads the current `dist` and `dynamoose-baseline` in one process and
+  interleaves rounds. A stub DynamoDB client gives canned responses, so the numbers have no network time.
+  It measures operations (create, get, update, nested update) and report-only internal stages
+  (`getAttributeValue`, `getAttributeTypeDetails`, `attributes`, `getTypePaths`, `objectFromSchema`, save
+  conform). `BASELINE=<package dir>` compares against another build.
+- Run the numbers under plain `node`, not `tsx`. tsx hooks every `require`, and `Item.ts` calls
+  `require("./Schema")` inline per value, so tsx skews the operation numbers. `EXTRA_SCHEMA` with
+  `node --import tsx` (from a checkout of common) is for a live schema check only.
+- CI gate: job `benchmark-gate` in `.github/workflows/ci.yml`, pull requests only. It builds the PR and its
+  base and runs `npm run benchmark -- --gate`. Only `create`, `get` and `update` on the large and checkout
+  schemas can fail it. A row fails when the median is more than 15% slower AND a one-sided Mann-Whitney U
+  test gives p < 0.01. A failed row runs once more; a second failure profiles both builds and uploads the
+  `benchmark-gate` artifact. Runner speed differs about 2x between runs: compare only numbers from the same
+  process.
+- Equivalence suite: `test/Equivalence.js` (cases in `equivalence/corpus.js`, harness in
+  `equivalence/compare.js`) runs every case on the current build and on `dynamoose-baseline` (an npm alias
+  of the published `@monei-js/dynamoose`) and compares requests, results, errors, mutations and user
+  function calls. A failure is a bug in the change. Never edit a case or the baseline to make it pass.
+  Bump the alias to the new version after each release.
+- Schema lookup cache (`lib/Schema.ts`): `getAttributeValue`, `getAttributeTypeDetails` and `attributes()`
+  without arguments are cached per Schema, keyed by the normalized path.
+  - The only write to a schema after its constructor is the `ttl` attribute in `lib/Table/index.ts`. It
+    calls `clearSchemaLookupCaches()`, which drops the cache of every schema (nested schemas share objects).
+    A new post-construction write must call it too.
+  - Misses, thrown errors and keys only inherited from a prototype (`constructor`, `__proto__`) are never
+    cached, so `saveUnknown` input cannot grow the cache.
+  - Cached values are not copied or frozen: callers get the same schema references as before. Only
+    `attributes()` returns a new copy per call.
+  - A path that reaches an array of attribute definitions is not served from the cache when a
+    `typeIndexOptionMap` is passed, because the result depends on the item.
 
 **Monorepo Management:**
 - Lerna handles package dependencies and publishing
