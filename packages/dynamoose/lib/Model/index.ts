@@ -822,13 +822,21 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// A nested value goes through the schema the same way a top-level one does: wrap it in the
 		// object its path describes, convert that, and read the value back. Every list index maps to
 		// element 0, since all elements of a list share one schema. Required is checked separately,
-		// on the path itself, because the wrapper lacks the siblings of the value.
+		// on the path itself, because the wrapper lacks the siblings of the value. Returns undefined
+		// when the schema drops the value.
 		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => {
 			const segments = parsePathWithArrayIndices(path);
 			const wrapped = segments.reduceRight((child, segment) => segment.type === "index" ? [child] : {[segment.value]: child}, value as any);
 			const converted = await this.Item.objectFromSchema(wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false} as any);
 			const result = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
-			return awsConverter().convertToAttr(result);
+			return result === undefined ? undefined : awsConverter().convertToAttr(result);
+		};
+		const isSchemaPath = (path: string): boolean => {
+			try {
+				return Boolean(schema.getAttributeValue(path.replace(/\[(\d+)\]/gu, ".$1")));
+			} catch (e) {
+				return false;
+			}
 		};
 		const getUpdateExpressionObject: () => Promise<any> = async () => {
 			const updateTypes = [
@@ -1003,8 +1011,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 							// An undefined value stays undefined, so the path is removed below, as a top-level attribute is
 							if (subValue !== undefined) {
 								subValue = await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
-								// Mark this value as already converted to prevent double conversion later
-								alreadyConvertedValues.add(`:v${index}`);
+								if (subValue === undefined && !isSchemaPath(subKey)) {
+									// The schema drops this key (not declared, not covered by saveUnknown), as a full
+									// write of the parent would: skip the path, never write it as NULL
+									continue;
+								}
+								if (subValue !== undefined) {
+									// Mark this value as already converted to prevent double conversion later
+									alreadyConvertedValues.add(`:v${index}`);
+								}
 							}
 						} else {
 							// Original logic for simple top-level attributes like "name", "age"
