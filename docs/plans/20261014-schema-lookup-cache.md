@@ -587,14 +587,65 @@ That differs from 4.2.4 only where 4.2.4 depends on call order.
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] create and update on the large, extra-large and Checkout schemas are faster by a recorded percentage;
-  no operation slower beyond noise
-- [ ] the equivalence suite passes against `dynamoose-baseline` 4.2.4
-- [ ] `npm run build`, then the full unit suite: `cd packages/dynamoose && npm test`
-- [ ] the DynamoDB Local tests: `cd packages/dynamoose && npm run test:integration`
-- [ ] lint and type tests: `npm run lint`, `cd packages/dynamoose && npm run test:types`
-- [ ] the full `@monei/common` suite against the new build (worktree, build copied over
-  `node_modules/@monei-js/dynamoose/dist`)
+- [x] create and update on the large, extra-large and Checkout schemas are faster by a recorded percentage;
+  no operation slower beyond noise (table below: create +61.8% to +108.0%, update +121.5% to +135.9%, get
+  +99.8% to +154.2%; every operation and stage on every schema faster, lowest +4.5%)
+- [x] the equivalence suite passes against `dynamoose-baseline` 4.2.4 (`test/Equivalence.js`, 39 passed, alone
+  and in each full run)
+- [x] `npm run build`, then the full unit suite: `cd packages/dynamoose && npm test` (3 runs, all green: 35
+  suites passed, 1 skipped; 2619 passed, 20 skipped)
+- [x] the DynamoDB Local tests: `cd packages/dynamoose && npm run test:integration` (26 passed, own
+  `dynamoose-it` container on port 8100, stopped after)
+- [x] lint and type tests: `npm run lint`, `cd packages/dynamoose && npm run test:types` (both exit 0)
+- [x] the full `@monei/common` suite against the new build (worktree, build copied over
+  `node_modules/@monei-js/dynamoose/dist`): 273 files, 7292 tests passed, 0 skipped, no type errors
+
+**Results (2026-10-14, node v24.22.0, branch head 87397693, `lib/` as of b30c19bd).**
+
+- Unit suite: 3 runs at load average 18.8, 19.6 and 24.1 (12 cores), all exit 0, the same totals each time
+  (2619 passed, 20 skipped: the 18 pre-existing skips and the 2 `it.skip` of Task 8; the skipped suite is
+  `test/AttributeTypeCache.js`). No failure, so no flaky test to name. The one unnamed failure of Task 8 did
+  not come back.
+- Consumer check: worktree of common at `origin/fix/flatupdate-nested-remove` (8970f660, pins
+  `@monei-js/dynamoose` 4.2.4), `pnpm install --frozen-lockfile`, the installed package's `dist` removed and
+  replaced by the fork's build (`diff -rq` identical; removed first, so the pnpm store was not written
+  through hard links). `pnpm test`: 273 test files, 7292 tests passed. Worktree and its `.env.local`
+  removed, `git worktree prune` run.
+
+Full benchmark, current (cache) vs `dynamoose-baseline` 4.2.4, plain `node --expose-gc`, 10 rounds of 200 ms,
+medians in ops/s. Load average 40.4 at start, 62.7 at end (108.7 one-minute peak during the run), far above
+the Task 3 conditions (4.5), so absolute numbers are low and noisy. The noise floor of Task 3 (±2.5%, small
+`get` ±7%) is 25 times smaller than the smallest change here.
+
+| schema      | operation      | baseline | current |  change |
+| ----------- | -------------- | -------: | ------: | ------: |
+| small       | create         |   7337.9 | 17118.7 | +133.3% |
+| small       | get            |  14172.8 | 27688.1 |  +95.4% |
+| small       | update         |   7250.3 | 14266.9 |  +96.8% |
+| medium      | create         |   1317.9 |  2825.5 | +114.4% |
+| medium      | get            |   2686.9 |  5708.2 | +112.4% |
+| medium      | update         |    723.6 |  3088.3 | +326.8% |
+| large       | create         |    124.6 |   223.8 |  +79.7% |
+| large       | create-request |    109.2 |   293.1 | +168.5% |
+| large       | get            |    242.4 |   598.8 | +147.0% |
+| large       | update         |    146.1 |   344.7 | +135.9% |
+| large       | update-nested  |    160.3 |   384.3 | +139.8% |
+| extra-large | create         |     72.1 |   150.1 | +108.0% |
+| extra-large | create-request |     66.4 |   129.6 |  +95.3% |
+| extra-large | get            |    140.1 |   356.3 | +154.2% |
+| extra-large | update         |     87.1 |   197.6 | +127.0% |
+| extra-large | update-nested  |     80.3 |   204.2 | +154.3% |
+| checkout    | create         |    112.8 |   182.5 |  +61.8% |
+| checkout    | create-request |    113.2 |   199.9 |  +76.6% |
+| checkout    | get            |    240.7 |   480.9 |  +99.8% |
+| checkout    | update         |     86.0 |   190.4 | +121.5% |
+| checkout    | update-nested  |    128.9 |   252.1 |  +95.6% |
+
+Rows not shown (small and medium `create-request` and `update-nested`): +128.5% to +165.2%. Stages, all
+faster: checkout `getAttributeValue` +261.1%, `getAttributeTypeDetails` +776.1%, `objectFromSchema` toDynamo
++74.4% and fromDynamo +37.3%, save conform +65.1%, `getTypePaths` +4.5% (the smallest change of the run).
+The large `create` gain (+79.7%) is lower than in Task 5 (+126.5% at load 6–8); the load here is 6–10
+times higher, and the other large rows match Task 5 within that spread.
 
 ### Task 10: Update documentation
 
