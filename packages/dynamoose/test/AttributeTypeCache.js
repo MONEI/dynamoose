@@ -6,7 +6,7 @@ const dynamoose = require("../dist");
 // the type comes from the value, and a Set, an array and an object share typeof "object". The first
 // update on a model then decides the type of later updates. Upstream and a fresh model write the
 // value's own type. A fix changes requests, so it waits for the user's decision.
-// See docs/plans/20261014-schema-lookup-cache.md, Task 8.
+// See docs/plans/completed/20261014-schema-lookup-cache.md, Task 8.
 describe("Model.update attributeTypeCache for saveUnknown attributes", () => {
 	const model = (name) => dynamoose.model(name, new dynamoose.Schema({"id": String}, {"saveUnknown": true}), {"create": false, "waitForActive": false});
 	const values = async (Model, update) => (await Model.update({"id": "1"}, update, {"return": "request"})).ExpressionAttributeValues;
