@@ -775,7 +775,7 @@ describe("Model", () => {
 							}
 						}
 					}});
-					new dynamoose.Table("User", [User], {"readStrict": true});
+					new dynamoose.Table("User", [User]);
 					const date = new Date();
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": date.getTime()}}});
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected birthday to be of type date, instead found type number."));
@@ -783,7 +783,7 @@ describe("Model", () => {
 
 				it("Should throw error if returning ISO Date for String", async () => {
 					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
-					new dynamoose.Table("User", [User], {"readStrict": true});
+					new dynamoose.Table("User", [User]);
 					const date = new Date();
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"S": date.toISOString()}}});
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected birthday to be of type date, instead found type string."));
@@ -791,52 +791,10 @@ describe("Model", () => {
 
 				it("Should throw type mismatch error if passing in wrong type with custom type", () => {
 					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
-					new dynamoose.Table("User", [User], {"readStrict": true});
+					new dynamoose.Table("User", [User]);
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"S": "Hello World"}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected birthday to be of type date, instead found type string."));
-				});
-
-				it("Should return object with Number for ISO Date when readStrict is false", async () => {
-					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": {
-						"type": {
-							"value": Date,
-							"settings": {
-								"storage": "iso"
-							}
-						}
-					}});
-					new dynamoose.Table("User", [User], {"readStrict": false});
-					const date = new Date();
-					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": date.getTime()}}});
-					const user = await callType.func(User).bind(User)(1);
-					expect(user).toBeInstanceOf(Object);
-					expect(user.id).toEqual(1);
-					expect(user.name).toEqual("Charlie");
-					expect(user.birthday).toEqual(date.getTime()); // Should preserve raw Number value
-				});
-
-				it("Should return object with ISO Date string when readStrict is false", async () => {
-					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
-					new dynamoose.Table("User", [User], {"readStrict": false});
-					const date = new Date();
-					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"S": date.toISOString()}}});
-					const user = await callType.func(User).bind(User)(1);
-					expect(user).toBeInstanceOf(Object);
-					expect(user.id).toEqual(1);
-					expect(user.name).toEqual("Charlie");
-					expect(user.birthday).toEqual(date.toISOString()); // Should preserve raw String value
-				});
-
-				it("Should return object with mismatched custom type when readStrict is false", async () => {
-					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
-					new dynamoose.Table("User", [User], {"readStrict": false});
-					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"S": "Hello World"}}});
-					const user = await callType.func(User).bind(User)(1);
-					expect(user).toBeInstanceOf(Object);
-					expect(user.id).toEqual(1);
-					expect(user.name).toEqual("Charlie");
-					expect(user.birthday).toEqual("Hello World"); // Should preserve raw String value instead of throwing
 				});
 
 				it("Should return object with correct values with object property", async () => {
@@ -863,7 +821,7 @@ describe("Model", () => {
 
 				it("Should throw type mismatch error if passing in wrong type with custom type for object", () => {
 					User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
-					new dynamoose.Table("User", [User], {"readStrict": true});
+					new dynamoose.Table("User", [User]);
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"S": "test"}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected address to be of type object, instead found type string."));
@@ -871,30 +829,10 @@ describe("Model", () => {
 
 				it("Should throw type mismatch error if passing in wrong type for nested object attribute", () => {
 					User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
-					new dynamoose.Table("User", [User], {"readStrict": true});
+					new dynamoose.Table("User", [User]);
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"M": {"country": {"BOOL": true}}}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected address.country to be of type string, instead found type boolean."));
-				});
-
-				it("Should return object with wrong type for object when readStrict is false", async () => {
-					User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
-					new dynamoose.Table("User", [User], {"readStrict": false});
-					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"S": "test"}}});
-					const user = await callType.func(User).bind(User)(1);
-					expect(user).toBeInstanceOf(Object);
-					expect(user.id).toEqual(1);
-					expect(user.address).toEqual("test"); // Should preserve raw String value
-				});
-
-				it("Should return object with wrong type for nested object attribute when readStrict is false", async () => {
-					User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
-					new dynamoose.Table("User", [User], {"readStrict": false});
-					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"M": {"country": {"BOOL": true}}}}});
-					const user = await callType.func(User).bind(User)(1);
-					expect(user).toBeInstanceOf(Object);
-					expect(user.id).toEqual(1);
-					expect(user.address).toEqual({"country": true}); // Should preserve raw boolean value
 				});
 
 				it("Should return object with correct values with object property and saveUnknown set to true", async () => {
@@ -1277,21 +1215,115 @@ describe("Model", () => {
 
 				it("Should throw error if Dynamo object contains properties that have type mismatch with schema", () => {
 					User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
-					new dynamoose.Table("User", [User], {"readStrict": true});
+					new dynamoose.Table("User", [User]);
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected age to be of type number, instead found type string."));
 				});
 
-				it("Should return object with type mismatch when readStrict is false", async () => {
-					User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
-					new dynamoose.Table("User", [User], {"readStrict": false});
-					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}});
-					const user = await callType.func(User).bind(User)(1);
-					expect(user).toBeInstanceOf(Object);
-					expect(user.id).toEqual(1);
-					expect(user.name).toEqual("Charlie");
-					expect(user.age).toEqual("Hello World"); // Should preserve raw String value
+				describe("readStrict", () => {
+					it("Should return the stored value if Dynamo object has type mismatch with schema and readStrict is false", async () => {
+						User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
+						new dynamoose.Table("User", [User], {"readStrict": false});
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}});
+
+						const user = await callType.func(User).bind(User)(1);
+						expect({...user}).toEqual({"id": 1, "name": "Charlie", "age": "Hello World"});
+					});
+
+					it("Should return the stored value if nested object attribute has type mismatch with schema and readStrict is false", async () => {
+						User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
+						new dynamoose.Table("User", [User], {"readStrict": false});
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"M": {"country": {"BOOL": true}}}}});
+
+						const user = await callType.func(User).bind(User)(1);
+						expect({...user}).toEqual({"id": 1, "address": {"country": true}});
+					});
+
+					it("Should return the stored value if custom type attribute has type mismatch with schema and readStrict is false", async () => {
+						User = dynamoose.model("User", {"id": Number, "birthday": Date});
+						new dynamoose.Table("User", [User], {"readStrict": false});
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "birthday": {"S": "Hello World"}}});
+
+						const user = await callType.func(User).bind(User)(1);
+						expect({...user}).toEqual({"id": 1, "birthday": "Hello World"});
+					});
+
+					it("Should still apply custom types and get modifiers if readStrict is false", async () => {
+						User = dynamoose.model("User", {"id": Number, "name": {"type": String, "get": (val) => `${val}-get`}, "birthday": Date});
+						new dynamoose.Table("User", [User], {"readStrict": false});
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": "1"}}});
+
+						const user = await callType.func(User).bind(User)(1);
+						expect({...user}).toEqual({"id": 1, "name": "Charlie-get", "birthday": new Date(1)});
+					});
+
+					it("Should not run get modifiers on a value that matches no schema type if readStrict is false", async () => {
+						User = dynamoose.model("User", {"id": Number, "age": {"type": Number, "get": (val) => val + 1}, "data": [{"type": String, "get": (val) => `${val}-get`}, {"type": Object, "schema": {"value": Number}}]});
+						new dynamoose.Table("User", [User], {"readStrict": false});
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "age": {"S": "4"}, "data": {"N": "5"}}});
+
+						const user = await callType.func(User).bind(User)(1);
+						expect({...user}).toEqual({"id": 1, "age": "4", "data": 5});
+					});
+
+					it("Should still remove attributes not in schema if readStrict is false", async () => {
+						User = dynamoose.model("User", {"id": Number, "name": String});
+						new dynamoose.Table("User", [User], {"readStrict": false});
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "hello": {"S": "world"}}});
+
+						const user = await callType.func(User).bind(User)(1);
+						expect({...user}).toEqual({"id": 1, "name": "Charlie"});
+					});
+
+					it("Should return the same item as readStrict true for valid nested data", async () => {
+						// Sets, lists, model references, `THIS` and `ANY` attributes hold children that are not schema attributes, and attributes with multiple types pick their settings by the matched type. readStrict false must not change any of this for valid data.
+						const schema = {
+							"id": Number,
+							"friends": {"type": Set, "schema": [String]},
+							"pets": {"type": Array, "schema": [{"type": Object, "schema": {"name": String, "tags": {"type": Array, "schema": [String]}}}]},
+							"parent": dynamoose.model("Parent", {"id": Number, "data": String}),
+							"rangeParent": dynamoose.model("RangeParent", {"id": Number, "sort": {"type": String, "rangeKey": true}}),
+							"self": dynamoose.type.THIS,
+							"meta": {"type": Object, "schema": dynamoose.type.ANY},
+							"list": {"type": Array, "schema": dynamoose.type.ANY},
+							"data": [{"type": String, "get": (val) => `${val}-get`}, {"type": Object, "schema": {"value": {"type": Number, "get": (val) => val + 100}}}]
+						};
+						const item = {
+							"id": {"N": "1"},
+							"friends": {"SS": ["Charlie", "Bob"]},
+							"pets": {"L": [{"M": {"name": {"S": "Rex"}, "tags": {"L": [{"S": "a"}, {"S": "b"}]}}}, {"M": {"name": {"S": "Tom"}}}]},
+							"parent": {"N": "2"},
+							"rangeParent": {"M": {"id": {"N": "2"}, "sort": {"S": "a"}}},
+							"self": {"N": "3"},
+							"meta": {"M": {"a": {"M": {"b": {"N": "1"}}}, "c": {"L": [{"S": "d"}]}}},
+							"list": {"L": [{"S": "a"}, {"M": {"b": {"N": "1"}}}]},
+							"data": {"M": {"value": {"N": "4"}}}
+						};
+						getItemFunction = () => Promise.resolve({"Item": item});
+
+						const StrictUser = dynamoose.model("StrictUser", schema);
+						new dynamoose.Table("StrictUser", [StrictUser]);
+						const NonStrictUser = dynamoose.model("NonStrictUser", schema);
+						new dynamoose.Table("NonStrictUser", [NonStrictUser], {"readStrict": false});
+
+						const strictUser = await callType.func(StrictUser).bind(StrictUser)(1);
+						const nonStrictUser = await callType.func(NonStrictUser).bind(NonStrictUser)(1);
+						expect(nonStrictUser.toJSON()).toEqual(strictUser.toJSON());
+						expect(Object.keys(nonStrictUser.toJSON())).toEqual(Object.keys(item));
+					});
+
+					it("Should keep type checks on tables that do not set readStrict", async () => {
+						// readStrict false on one table must not leak into the defaults of a later table
+						const NonStrictUser = dynamoose.model("NonStrictUser", {"id": Number, "age": Number});
+						new dynamoose.Table("NonStrictUser", [NonStrictUser], {"readStrict": false});
+						User = dynamoose.model("User", {"id": Number, "age": Number});
+						new dynamoose.Table("User", [User]);
+						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "age": {"S": "Hello World"}}});
+
+						expect({...await callType.func(NonStrictUser).bind(NonStrictUser)(1)}).toEqual({"id": 1, "age": "Hello World"});
+						await expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected age to be of type number, instead found type string."));
+					});
 				});
 
 				it("Should wait for model to be ready prior to running DynamoDB API call", async () => {
@@ -1334,7 +1366,7 @@ describe("Model", () => {
 		let User, params, promiseFunction;
 		beforeEach(() => {
 			User = dynamoose.model("User", {"id": Number, "name": String});
-			new dynamoose.Table("User", [User], {"readStrict": true});
+			new dynamoose.Table("User", [User]);
 			params = undefined;
 			promiseFunction = null;
 			dynamoose.aws.ddb.set({
@@ -1594,6 +1626,16 @@ describe("Model", () => {
 					expect(result.unprocessedKeys).toEqual([]);
 					expect(result.map((item) => ({...item}))).toEqual([
 						{"id": 1, "name": "Charlie"}
+					]);
+				});
+
+				it("Should return the stored value if Dynamo object has type mismatch with schema and readStrict is false", async () => {
+					User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
+					new dynamoose.Table("User", [User], {"readStrict": false});
+					promiseFunction = () => Promise.resolve({"Responses": {"User": [{"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}]}, "UnprocessedKeys": {}});
+					const result = await callType.func(User).bind(User)([1]);
+					expect(result.map((item) => ({...item}))).toEqual([
+						{"id": 1, "name": "Charlie", "age": "Hello World"}
 					]);
 				});
 
@@ -2071,10 +2113,10 @@ describe("Model", () => {
 					// Check original timestamps
 					expect(result.id).toEqual(1);
 					expect(result.name).toEqual("Charlie");
-					expect(result.createdAt.constructor).toEqual(Date);
-					expect(result.createdAt).toBeWithinRange(date1 - 10, date1 + 10);
-					expect(result.updatedAt.constructor).toEqual(Date);
-					expect(result.updatedAt).toBeWithinRange(date1 - 10, date1 + 10);
+					expect(result.createdAt).toBeInstanceOf(Date);
+					expect(result.createdAt.getTime()).toBeWithinRange(date1 - 10, date1 + 10);
+					expect(result.updatedAt).toBeInstanceOf(Date);
+					expect(result.updatedAt.getTime()).toBeWithinRange(date1 - 10, date1 + 10);
 
 					await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -2083,16 +2125,15 @@ describe("Model", () => {
 					// Mutate document and re-save
 					result.name = "Charlie 2";
 					const result2 = await result.save();
-					const date3 = Date.now();
 
 					expect(result.toJSON()).toEqual(result2.toJSON());
 					[result, result2].forEach((r) => {
 						expect(r.id).toEqual(1);
 						expect(r.name).toEqual("Charlie 2");
-						expect(r.createdAt.constructor).toEqual(Date);
-						expect(r.createdAt.getTime()).toBeWithinRange(date1, date3);
-						expect(r.updatedAt.constructor).toEqual(Date);
-						expect(r.updatedAt.getTime()).toBeWithinRange(date2, date3);
+						expect(r.createdAt).toBeInstanceOf(Date);
+						expect(r.createdAt.getTime()).toBeWithinRange(date1 - 10, date1 + 10);
+						expect(r.updatedAt).toBeInstanceOf(Date);
+						expect(r.updatedAt.getTime()).toBeWithinRange(date2 - 10, date2 + 10);
 					});
 				});
 			});
@@ -3169,7 +3210,7 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues[":v0"]).toEqual({"S": "Default"});
 				});
 
-				it("Should not write a nested forced default as a top-level attribute", async () => {
+				it("Should not write the forced default of a sibling for a nested $SET", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"companyName": {"type": String, "default": "Default", "forceDefault": true}, "other": String}}});
 					new dynamoose.Table("User", [User]);
@@ -3386,6 +3427,15 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"SS": ["a"]}});
 				});
 
+				it("Should send a string set for nested $DELETE of an array from a set attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"tags": {"type": Set, "schema": [String]}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$DELETE": {"meta.tags": ["a"]}});
+					expect(updateItemParams.UpdateExpression).toEqual("DELETE #a0.#a1 :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"SS": ["a"]}});
+				});
+
 				it("Should remove a nested attribute for $SET to undefined", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": String}}});
@@ -3416,14 +3466,6 @@ describe("Model", () => {
 					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": {"type": String, "required": true}}}});
 					new dynamoose.Table("User", [User]);
 					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.name": undefined}})).rejects.toThrow("meta.name is a required property but has no value when trying to save item");
-				});
-
-				it("Should type each value by its own attribute when $REMOVE precedes $SET", async () => {
-					updateItemFunction = () => Promise.resolve({});
-					User = dynamoose.model("User", {"id": Number, "tags": {"type": Set, "schema": [String]}, "list": {"type": Array, "schema": [String]}});
-					new dynamoose.Table("User", [User]);
-					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["tags"], "$SET": {"list": ["a", "b"]}});
-					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v1": {"L": [{"S": "a"}, {"S": "b"}]}});
 				});
 
 				it("Should not count a nested path component as a combine source", async () => {
@@ -3518,28 +3560,6 @@ describe("Model", () => {
 					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"description": String}}});
 					new dynamoose.Table("User", [User]);
 					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["business..description"]})).rejects.toThrow("Invalid dot notation path: business..description. Path cannot have empty components.");
-				});
-
-				it("Should send correct params to updateItem with $REMOVE non-nested attributes", async () => {
-					updateItemFunction = () => Promise.resolve({});
-					User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
-					new dynamoose.Table("User", [User]);
-					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["name", "age"]});
-					expect(updateItemParams).toBeInstanceOf(Object);
-					expect(updateItemParams).toEqual({
-						"ExpressionAttributeNames": {
-							"#a0": "name",
-							"#a1": "age"
-						},
-						"UpdateExpression": "REMOVE #a0, #a1",
-						"Key": {
-							"id": {
-								"N": "1"
-							}
-						},
-						"TableName": "User",
-						"ReturnValues": "ALL_NEW"
-					});
 				});
 
 				// Array indexing tests
@@ -3742,13 +3762,6 @@ describe("Model", () => {
 					User = dynamoose.model("User", {"id": Number, "reps": {"type": Array, "schema": [{"type": Object, "schema": {"name": {"type": String, "required": true}}}]}});
 					new dynamoose.Table("User", [User]);
 					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["reps[0]name"]})).rejects.toThrow("Invalid path: reps[0]name. A list index must be followed by a dot, another index or the end of the path.");
-				});
-
-				it("Should throw error for a path that starts with a list index", async () => {
-					updateItemFunction = () => Promise.resolve({});
-					User = dynamoose.model("User", {"id": Number, "tags": {"type": Array, "schema": [String]}});
-					new dynamoose.Table("User", [User]);
-					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["[0]"]})).rejects.toThrow("Invalid path: [0]. Path must start with an attribute name.");
 				});
 
 				it("Should check required on a nested path written with a dot before a list index", async () => {
@@ -4049,6 +4062,14 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
+				});
+
+				it("Should type each value by its own attribute when $REMOVE comes before $SET", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "tags": {"type": Set, "schema": [String]}, "list": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["tags"], "$SET": {"list": ["a", "b"]}});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v1": {"L": [{"S": "a"}, {"S": "b"}]}});
 				});
 
 				it("Should send correct params to updateItem with $REMOVE saveUnknown property", async () => {
@@ -4453,6 +4474,14 @@ describe("Model", () => {
 					});
 				});
 
+				it("Should return the stored value if updated item has type mismatch with schema and readStrict is false", async () => {
+					User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
+					new dynamoose.Table("User", [User], {"readStrict": false});
+					updateItemFunction = () => Promise.resolve({"Attributes": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}});
+					const result = await callType.func(User).bind(User)({"id": 1, "name": "Charlie"});
+					expect({...result}).toEqual({"id": 1, "name": "Charlie", "age": "Hello World"});
+				});
+
 				it("Should return updated item with object property upon success", async () => {
 					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "address": Object}, {"saveUnknown": true}));
 					new dynamoose.Table("User", [User]);
@@ -4661,6 +4690,23 @@ describe("Model", () => {
 						"TableName": "User",
 						"ReturnValues": "ALL_NEW"
 					});
+				});
+
+				it("Should not write a nested forceDefault attribute as a top-level attribute", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "name": String, "business": {"type": Object, "schema": {"tier": {"type": String, "default": "basic", "forceDefault": true}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"name": "Charlie"});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "name"});
+				});
+
+				it("Should apply a nested forceDefault attribute when its parent is written", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "business": {"type": Object, "schema": {"tier": {"type": String, "default": "basic", "forceDefault": true}, "name": String}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"business": {"name": "ACME", "tier": "pro"}});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"name": {"S": "ACME"}, "tier": {"S": "basic"}}}});
 				});
 
 				it("Should use forceDefault value if deleting property", async () => {
@@ -4912,27 +4958,11 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "name"});
 				});
 
-				it("Should throw error if updating one combine property", () => {
-					updateItemFunction = () => Promise.resolve({});
-					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
-					new dynamoose.Table("User", [User]);
-
-					return expect(callType.func(User).bind(User)({"id": 1}, {"data1": "Charlie"})).rejects.toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: data2."));
-				});
-
-				// A combine attribute that IS the key is a different case entirely. Requiring its sources
-				// and then deriving a SET from them makes every update on such a schema impossible:
-				// DynamoDB rejects any SET on a key attribute. The key is immutable and already supplied
-				// in `Key`, so the whole combine dance has to be skipped for it.
 				it("Shouldn't require combine attributes when the combine attribute is the hashKey", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"entity": {"type": {"value": "Combine", "settings": {"attributes": ["entityType", "entityId"]}}, "hashKey": true}, "docId": {"type": String, "rangeKey": true}, "entityType": String, "entityId": String, "data": String});
 					new dynamoose.Table("User", [User]);
-
 					await callType.func(User).bind(User)({"entity": "ACCOUNT#1", "docId": "doc1"}, {"data": "Charlie"});
-
-					expect(updateItemParams).toBeInstanceOf(Object);
-					// The key attribute must NOT appear in the update expression — only `data` does.
 					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data"});
 					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
 					expect(updateItemParams.Key).toEqual({"entity": {"S": "ACCOUNT#1"}, "docId": {"S": "doc1"}});
@@ -4942,31 +4972,31 @@ describe("Model", () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "entity": {"type": {"value": "Combine", "settings": {"attributes": ["entityType", "entityId"]}}, "rangeKey": true}, "entityType": String, "entityId": String, "data": String});
 					new dynamoose.Table("User", [User]);
-
 					await callType.func(User).bind(User)({"id": 1, "entity": "ACCOUNT#1"}, {"data": "Charlie"});
-
 					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "data"});
 					expect(updateItemParams.UpdateExpression).toEqual("SET #a0 = :v0");
 				});
 
-				// The sources of a key are immutable for the same reason the key is. Silently setting them
-				// would leave them describing a different entity than the key they were combined into.
 				it("Should throw error if updating the combine attributes of a key", () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"entity": {"type": {"value": "Combine", "settings": {"attributes": ["entityType", "entityId"]}}, "hashKey": true}, "docId": {"type": String, "rangeKey": true}, "entityType": String, "entityId": String, "data": String});
 					new dynamoose.Table("User", [User]);
-
 					return expect(callType.func(User).bind(User)({"entity": "ACCOUNT#1", "docId": "doc1"}, {"entityType": "IDENTITY", "entityId": "2", "data": "Charlie"})).rejects.toEqual(new CustomError.InvalidParameter("You cannot update the combine attributes of entity because it is part of the key. Remove them from the update: entityType, entityId."));
 				});
 
-				// $ADD and $DELETE write the source just as surely as $SET does. Missing them here would
-				// let the source drift away from the key combined from it, with no error raised.
 				it("Should throw error if updating the combine attributes of a key via $ADD", () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"entity": {"type": {"value": "Combine", "settings": {"attributes": ["major", "minor"]}}, "hashKey": true}, "docId": {"type": String, "rangeKey": true}, "major": Number, "minor": Number, "data": String});
 					new dynamoose.Table("User", [User]);
-
 					return expect(callType.func(User).bind(User)({"entity": "1-2", "docId": "doc1"}, {"$ADD": {"major": 1}})).rejects.toEqual(new CustomError.InvalidParameter("You cannot update the combine attributes of entity because it is part of the key. Remove them from the update: major."));
+				});
+
+				it("Should throw error if updating one combine property", () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data1": String, "data2": String, "combine": {"type": {"value": "Combine", "settings": {"attributes": ["data1", "data2"]}}}});
+					new dynamoose.Table("User", [User]);
+
+					return expect(callType.func(User).bind(User)({"id": 1}, {"data1": "Charlie"})).rejects.toEqual(new CustomError.InvalidParameter("You must update all or none of the combine attributes when running Model.update. Missing combine attributes: data2."));
 				});
 
 				it("Shouldn't throw error if update with property allowing multiple types as first type", async () => {
@@ -5693,10 +5723,10 @@ describe("Model", () => {
 
 			it("Should print warning if passing callback", () => {
 				let result;
-				const oldWarn = console.warn;
-				console.warn = (warning) => result = warning;
+				const oldWarn = console.warn; // eslint-disable-line no-console
+				console.warn = (warning) => result = warning; // eslint-disable-line no-console
 				User.transaction.get(1, utils.empty_function);
-				console.warn = oldWarn;
+				console.warn = oldWarn; // eslint-disable-line no-console
 
 				expect(result).toEqual("Dynamoose Warning: Passing callback function into transaction method not allowed. Removing callback function from list of arguments.");
 			});
@@ -5748,10 +5778,10 @@ describe("Model", () => {
 
 			it("Should print warning if passing callback", () => {
 				let result;
-				const oldWarn = console.warn;
-				console.warn = (warning) => result = warning;
+				const oldWarn = console.warn; // eslint-disable-line no-console
+				console.warn = (warning) => result = warning; // eslint-disable-line no-console
 				User.transaction.create({"id": 1}, {"overwrite": false}, utils.empty_function);
-				console.warn = oldWarn;
+				console.warn = oldWarn; // eslint-disable-line no-console
 
 				expect(result).toEqual("Dynamoose Warning: Passing callback function into transaction method not allowed. Removing callback function from list of arguments.");
 			});
@@ -5777,10 +5807,10 @@ describe("Model", () => {
 
 			it("Should print warning if passing callback", () => {
 				let result;
-				const oldWarn = console.warn;
-				console.warn = (warning) => result = warning;
+				const oldWarn = console.warn; // eslint-disable-line no-console
+				console.warn = (warning) => result = warning; // eslint-disable-line no-console
 				User.transaction.delete(1, utils.empty_function);
-				console.warn = oldWarn;
+				console.warn = oldWarn; // eslint-disable-line no-console
 
 				expect(result).toEqual("Dynamoose Warning: Passing callback function into transaction method not allowed. Removing callback function from list of arguments.");
 			});
@@ -5840,10 +5870,10 @@ describe("Model", () => {
 
 			it("Should print warning if passing callback", () => {
 				let result;
-				const oldWarn = console.warn;
-				console.warn = (warning) => result = warning;
+				const oldWarn = console.warn; // eslint-disable-line no-console
+				console.warn = (warning) => result = warning; // eslint-disable-line no-console
 				User.transaction.update({"id": 1, "name": "Bob"}, utils.empty_function);
-				console.warn = oldWarn;
+				console.warn = oldWarn; // eslint-disable-line no-console
 
 				expect(result).toEqual("Dynamoose Warning: Passing callback function into transaction method not allowed. Removing callback function from list of arguments.");
 			});
@@ -5902,10 +5932,10 @@ describe("Model", () => {
 
 			it("Should print warning if passing callback", () => {
 				let result;
-				const oldWarn = console.warn;
-				console.warn = (warning) => result = warning;
+				const oldWarn = console.warn; // eslint-disable-line no-console
+				console.warn = (warning) => result = warning; // eslint-disable-line no-console
 				User.transaction.condition(1, utils.empty_function);
-				console.warn = oldWarn;
+				console.warn = oldWarn; // eslint-disable-line no-console
 
 				expect(result).toEqual("Dynamoose Warning: Passing callback function into transaction method not allowed. Removing callback function from list of arguments.");
 			});

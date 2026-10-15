@@ -198,6 +198,15 @@ describe("Model.update against DynamoDB", () => {
 			expect((await raw()).meta.M.tags.SS.sort()).toEqual(["a", "b"]);
 		});
 
+		it("deletes an array from a nested string set", async () => {
+			const {Model, raw} = await setup(
+				{"id": Number, "meta": {"type": Object, "schema": {"tags": {"type": Set, "schema": [String]}}}},
+				{"meta": {"M": {"tags": {"SS": ["a", "b"]}}}}
+			);
+			await Model.update({"id": 1}, {"$DELETE": {"meta.tags": ["a"]}});
+			expect(await raw()).toEqual({...key, "meta": {"M": {"tags": {"SS": ["b"]}}}});
+		});
+
 		it("adds to a nested number", async () => {
 			const {Model, raw} = await setup({"id": Number, "stats": {"type": Object, "schema": {"count": Number}}}, {"stats": {"M": {"count": {"N": "2"}}}});
 			await Model.update({"id": 1}, {"$ADD": {"stats.count": 3}});

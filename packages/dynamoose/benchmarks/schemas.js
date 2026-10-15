@@ -1,5 +1,5 @@
 // Schemas of the benchmark, also used by the equivalence corpus (equivalence/corpus.js).
-const checkout = require("./fixtures/checkout-schema");
+const order = require("./fixtures/order-schema");
 
 // Small schema for baseline comparison
 const createSmallSchema = (dynamoose) =>
@@ -1439,7 +1439,7 @@ function generateTestData (schemaType) {
 						}]
 					}]
 				}]
-			},
+			}
 		};
 	}
 
@@ -1478,7 +1478,7 @@ const schemas = {
 		"update": () => ({"personalInfo": {...generateTestData("extra-large").personalInfo, "firstName": "Updated"}}),
 		"nestedUpdate": () => ({"$SET": {"personalInfo.firstName": "Updated"}})
 	},
-	[checkout.name]: checkout
+	[order.name]: order
 };
 module.exports = {
 	createSmallSchema,

@@ -1656,8 +1656,8 @@ Schema.prototype.attributes = function (this: Schema, object?: ObjectType, setti
 };
 
 Schema.prototype.getAttributeValue = function (this: Schema, key: string, settings?: {standardKey?: boolean; typeIndexOptionMap?: {}}): AttributeDefinition {
-	// A non-string key is never cached. 4.2.4 throws a TypeError for most such keys, and V8 builds its
-	// message from the source expression that failed, so the split below keeps the 4.2.4 expression.
+	// A non-string key is never cached. Most such keys throw a TypeError, and V8 builds its message from
+	// the source expression that failed, so the split below keeps the expression of the uncached lookup.
 	const cache = typeof key === "string" ? getLookupCache(this) : undefined;
 	const standardKey = cache ? standardizeKey(key, settings) : undefined;
 	const cached = cache?.values.get(standardKey);

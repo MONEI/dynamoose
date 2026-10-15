@@ -3,7 +3,7 @@
 `benchmark.js` measures the CPU cost of dynamoose operations. It loads two builds in one process:
 
 - **current**: this package's `dist` (run `npm run build` first)
-- **baseline**: the published `@monei-js/dynamoose` named in the `dynamoose-baseline` devDependency
+- **baseline**: the published `dynamoose` release named in the `dynamoose-baseline` devDependency (an npm alias)
 
 Both builds use a stub DynamoDB client with canned responses, so no request leaves the process and
 the numbers contain no network time.
@@ -85,12 +85,12 @@ Total time counts a function once per sample, also when it is on the stack more 
 ## CI gate
 
 The `benchmark-gate` job of `.github/workflows/ci.yml` runs when a pull request is opened or gets new
-commits, on Node 24 (the runtime of the prod Lambdas). It checks out the pull request and its base branch, installs and builds
+commits, on the current Node.js LTS. It checks out the pull request and its base branch, installs and builds
 both, runs `npm run benchmark:smoke`, then `npm run benchmark -- --gate` with `BASELINE` set to the
 base checkout. `--gate` refuses to run without `BASELINE`, so that it cannot compare with the published
 release by mistake.
 
-`--gate` runs the operations and stages of the large and checkout schemas, 20 interleaved rounds of
+`--gate` runs the operations and stages of the large and order schemas, 20 interleaved rounds of
 150 ms. Only `create`, `get` and `update` on these two schemas can fail the job. All other rows are report
 only. A gated operation fails when both are true:
 
@@ -108,34 +108,32 @@ Limits: the gate compares each pull request with its base only, so slowdowns und
 several pull requests, and it covers only the gated rows. Compare with the published release
 (`npm run benchmark` without `BASELINE`) before a release to see the total change.
 
-## Results: schema lookup cache vs 4.2.4
+## Results: schema lookup cache
 
-Measured on 2026-10-14, plain `node --expose-gc`, full runs (10 rounds of 200 ms), median ops/s, on a
-12-core machine that also ran other work. Absolute ops/s depend on the load, so compare only the change
-within one run. In a quiet run the noise is about ±2.5% (±7% for small `get`).
+Measured on 2026-10-15 with Node 24.22, plain `node --expose-gc`, full runs (10 rounds of 200 ms), median
+ops/s, on a 12-core machine that also ran other work (load average 30 to 150). Absolute ops/s depend on
+the load, so compare only the change within one run.
 
-- Run A: Node 24.21, load average 5.9 to 7.7, first version of the cache.
-- Run B: Node 24.22, load average 40.4 to 62.7, first version of the cache.
-- Run C: Node 24.22, load average 8.0 to 4.5, after the review fixes (the public `getAttributeTypeDetails`
-  builds a new result per call, `lib/` uses the shared one). This is the current code.
+- Run A: `BASELINE` set to a build of the base branch without the cache, so only the cache differs.
+- Run B: against the published 4.2.0 (`dynamoose-baseline`), which also lacks the other unreleased changes.
 
-| schema      | operation | run A change | run B change | run C baseline | run C current | run C change |
-| ----------- | --------- | -----------: | -----------: | -------------: | ------------: | -----------: |
-| large       | create    |      +126.5% |       +79.7% |          129.9 |         297.4 |      +129.0% |
-| large       | get       |      +145.7% |      +147.0% |          270.5 |         661.7 |      +144.6% |
-| large       | update    |      +141.9% |      +135.9% |          157.7 |         379.9 |      +140.9% |
-| extra-large | create    |      +113.6% |      +108.0% |           74.7 |         164.6 |      +120.3% |
-| extra-large | get       |            - |      +154.2% |          154.3 |         364.5 |      +136.2% |
-| extra-large | update    |      +122.1% |      +127.0% |           92.1 |         219.8 |      +138.6% |
-| checkout    | create    |       +53.9% |       +61.8% |          147.3 |         219.0 |       +48.6% |
-| checkout    | get       |       +79.7% |       +99.8% |          321.0 |         562.4 |       +75.2% |
-| checkout    | update    |      +140.7% |      +121.5% |           98.3 |         240.4 |      +144.4% |
+| schema      | operation | run A baseline | run A current | run A change | run B change |
+| ----------- | --------- | -------------: | ------------: | -----------: | -----------: |
+| large       | create    |          175.4 |         304.8 |       +73.8% |      +103.5% |
+| large       | get       |          173.2 |         486.3 |      +180.8% |      +139.9% |
+| large       | update    |          104.7 |         262.4 |      +150.7% |       +98.1% |
+| extra-large | create    |          101.6 |         200.1 |       +96.9% |       +98.8% |
+| extra-large | get       |          118.0 |         269.0 |      +128.0% |      +123.0% |
+| extra-large | update    |           60.6 |         153.0 |      +152.7% |      +141.2% |
+| order       | create    |          230.6 |         336.0 |       +45.7% |       +57.7% |
+| order       | get       |          242.8 |         370.7 |       +52.7% |       +81.8% |
+| order       | update    |           81.9 |         196.0 |      +139.3% |       +88.1% |
 
-Every operation on every schema was faster in all three runs. In run C the `getAttributeTypeDetails`
-stage (the public method, now uncached) is +13% to +61%, and the checkout `getTypePaths` stage, which the
-cache does not cover, is -3.3% (noise level); every other stage is faster. Under `node --import tsx` the
-gains look smaller (checkout create about +14%), because tsx hooks every `require` and `Item` calls
-`require` inline per value. Use plain `node` for numbers.
+Every operation on every schema was faster in both runs. The `getAttributeTypeDetails` stage (the
+public method, which still builds a new result per call) is between -5% and +69%, and the order
+`getTypePaths` stage, which the cache does not cover, is unchanged within the noise; every other stage
+is faster. Use plain `node` for numbers: under `node --import tsx` the gains look smaller, because tsx
+hooks every `require` and `Item` calls `require` inline per value.
 
 ## Schemas
 
@@ -148,45 +146,26 @@ corpus use. Each factory takes the dynamoose build, so each build gets its own S
   `required` and `default` settings.
 - **extra-large**: large plus sets, `Buffer`, a multi-type attribute, `NULL` and a Date `storage`
   setting.
-- **checkout**: `fixtures/checkout-schema.js`, the schema of `@monei/common` `OperationModel` (the
-  `checkouts` table), generated once from common. Its header comment says how, and which function
-  settings it replaces with plain functions. The data is a confirmed card payment with invented values.
+- **order**: `fixtures/order-schema.js`, a wide e-commerce order schema: about 60 top-level attributes,
+  two nested objects of about 30 attributes with `validate` functions, an array of objects with
+  multi-type attributes, an object with its own `validate` and `set`, schemaless objects kept through
+  `saveUnknown`, a Set, `enum`, `required`, global indexes and ISO-string timestamps. The data is a paid
+  web order with invented values.
 
-## Live schema from `@monei/common` (EXTRA_SCHEMA)
+## Your own schema (EXTRA_SCHEMA)
 
-The fixture lacks the cost of common's zod-backed `validate` functions. To measure the real schema,
-set `EXTRA_SCHEMA` to a module that exports one schema in the shape of the fixture (`name`, `create`,
-`data`, `key`, `update`, optional `nestedUpdate`). `name` must differ from the built-in schemas. Run
-it from a checkout of common with `tsx`, so the module can import common's TypeScript source:
-
-```ts
-// live-checkout.ts, next to a checkout of common
-import {operationSchema} from './src/models/OperationModel';
-import {extractTimestamps, toSchemaDef} from './src/zod/converter';
-import {dynamoose as commonDynamoose} from './src/utils/dynamoose';
-const fixture = require('<dynamoose>/packages/dynamoose/benchmarks/fixtures/checkout-schema.js');
-
-// common's dynamoose.type symbols are not the symbols of the benchmarked builds.
-const remap = (value: any, types: any): any => {
-  for (const name of ['NULL', 'ANY', 'THIS']) if (value === commonDynamoose.type[name]) return types[name];
-  if (Array.isArray(value)) return value.map((v) => remap(v, types));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, remap(v, types)]));
-  return value;
-};
-
-module.exports = {
-  ...fixture,
-  name: 'checkout-live',
-  create: (dynamoose: any) => {
-    const {schema, saveUnknown} = toSchemaDef(operationSchema as any);
-    const {createdAt, updatedAt, ...definition} = schema as any; // what toDynamooseSchema omits
-    return new dynamoose.Schema(remap(definition, dynamoose.type), {saveUnknown, timestamps: extractTimestamps(operationSchema as any)});
-  }
-};
-```
+To measure a schema of your application, set `EXTRA_SCHEMA` to a module that exports one schema in the
+shape of `fixtures/order-schema.js`: `name`, `create (dynamoose)`, `data ()`, `key (data)`, `update ()` and
+an optional `nestedUpdate ()`. `name` must differ from the built-in schemas. `create` gets the dynamoose
+build to measure, so the module must build the schema with that build's `Schema` and `type` (for
+example `dynamoose.type.THIS`), not with a dynamoose it imports itself.
 
 ```bash
-# In the checkout of common (the env values are the ones of vitest.config.ts)
-STAGE=dev PROJECT=monei AWS_REGION=us-east-1 POWERTOOLS_LOG_LEVEL=SILENT EXTRA_SCHEMA=live-checkout.ts \
-  node --expose-gc --import tsx <dynamoose>/packages/dynamoose/benchmarks/benchmark.js
+EXTRA_SCHEMA=path/to/my-schema.js npm run benchmark
+npm run benchmark -- --profile update my-schema   # with EXTRA_SCHEMA set, "my-schema" being its name
 ```
+
+A module written in TypeScript can run through a loader, for example
+`EXTRA_SCHEMA=my-schema.ts node --expose-gc --import tsx benchmarks/benchmark.js`. Use plain `node` for
+the numbers: `tsx` hooks every `require`, which dynamoose calls inline in some hot paths, so the gains
+look smaller under it.

@@ -125,21 +125,15 @@ describe("Scan", () => {
 				});
 
 				it("Should return correct result if unknown properties are in DynamoDB", async () => {
-					// Set readStrict: true to maintain existing behavior for backward compatibility
-					Model = dynamoose.model("Cat", {"id": Number, "name": String});
-					new dynamoose.Table("Cat", [Model], {"readStrict": true});
-
 					scanPromiseResolver = () => ({"Items": [{"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"N": "1"}}]});
 					expect((await callType.func(Model.scan().exec).bind(Model.scan())()).map((item) => ({...item}))).toEqual([{"id": 1, "name": "Charlie"}]);
 				});
 
-				it("Should return correct result if unknown properties are in DynamoDB with readStrict: false", async () => {
-					// Test the new behavior with readStrict: false - unknown properties should be preserved
-					Model = dynamoose.model("Cat", new dynamoose.Schema({"id": Number, "name": String}, {"saveUnknown": true}));
+				it("Should return the stored value if Dynamo object has type mismatch with schema and readStrict is false", async () => {
+					Model = dynamoose.model("Cat", {"id": Number, "name": String, "age": Number});
 					new dynamoose.Table("Cat", [Model], {"readStrict": false});
-
-					scanPromiseResolver = () => ({"Items": [{"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"N": "1"}}]});
-					expect((await callType.func(Model.scan().exec).bind(Model.scan())()).map((item) => ({...item}))).toEqual([{"id": 1, "name": "Charlie", "age": 1}]);
+					scanPromiseResolver = () => ({"Items": [{"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}]});
+					expect((await callType.func(Model.scan().exec).bind(Model.scan())()).map((item) => ({...item}))).toEqual([{"id": 1, "name": "Charlie", "age": "Hello World"}]);
 				});
 
 				it("Should return correct result if using custom types", async () => {

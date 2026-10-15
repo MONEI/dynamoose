@@ -4,7 +4,6 @@ import {Schema, SchemaDefinition, DynamoDBSetTypeResult, ValueType, IndexItem, T
 import {Item as ItemCarrier, ItemSaveSettings, ItemSettings, ItemObjectFromSchemaSettings, AnyItem} from "../Item";
 import utils from "../utils";
 import ddb from "../aws/ddb/internal";
-import awsConverter from "../aws/converter";
 import Internal from "../Internal";
 import {Serializer, SerializerOptions} from "../Serializer";
 import {Condition, ConditionInitializer} from "../Condition";
@@ -19,24 +18,20 @@ import type from "../type";
 import {InternalPropertiesClass} from "../InternalPropertiesClass";
 import {Instance} from "../Instance";
 import returnModel from "../utils/dynamoose/returnModel";
-import {LRUCache} from "../utils/LRUCache";
+import awsConverter from "../aws/converter";
 const {internalProperties} = Internal.General;
 
-// Path parsing types and functions for array indexing support
+// One part of a nested update path: an attribute name or a list index
 interface PathSegment {
 	type: "attribute" | "index";
 	value: string | number;
 }
 
 /**
- * Parses a path that may contain array indices and dot notation
- * Examples:
- * 'keywords[0]' -> [{type: 'attribute', value: 'keywords'}, {type: 'index', value: 0}]
- * 'reps[0].name' -> [{type: 'attribute', value: 'reps'}, {type: 'index', value: 0}, {type: 'attribute', value: 'name'}]
- * 'data.items[1].tags[2]' -> [{type: 'attribute', value: 'data'}, {type: 'attribute', value: 'items'},
- *                              {type: 'index', value: 1}, {type: 'attribute', value: 'tags'}, {type: 'index', value: 2}]
+ * Splits a nested update path into its parts.
+ * `reps[0].name` -> [{"type": "attribute", "value": "reps"}, {"type": "index", "value": 0}, {"type": "attribute", "value": "name"}]
  */
-function parsePathWithArrayIndices(path: string): PathSegment[] {
+function parsePathWithArrayIndices (path: string): PathSegment[] {
 	const segments: PathSegment[] = [];
 	let current = "";
 	let i = 0;
@@ -45,67 +40,49 @@ function parsePathWithArrayIndices(path: string): PathSegment[] {
 		const char = path[i];
 
 		if (char === "[") {
-			// We've hit an array index, save current attribute if any
 			if (current) {
 				segments.push({"type": "attribute", "value": current});
 				current = "";
 			}
 
-			// Find the closing bracket
 			const closeBracket = path.indexOf("]", i);
 			if (closeBracket === -1) {
-				throw new Error(`Invalid path: unclosed bracket in '${path}'`);
+				throw new CustomError.InvalidParameter(`Invalid path: unclosed bracket in '${path}'`);
 			}
 
-			// Extract and validate the index
-			const indexStr = path.substring(i + 1, closeBracket);
-			validateArrayIndex(indexStr, path);
-			segments.push({"type": "index", "value": parseInt(indexStr, 10)});
+			const indexString = path.substring(i + 1, closeBracket);
+			if (!indexString) {
+				throw new CustomError.InvalidParameter(`Invalid array index in path '${path}': array index cannot be empty`);
+			}
+			if (!/^\d+$/u.test(indexString)) {
+				throw new CustomError.InvalidParameter(`Invalid array index in path '${path}': '${indexString}' must be numeric`);
+			}
+			segments.push({"type": "index", "value": parseInt(indexString, 10)});
 
 			i = closeBracket + 1;
-
 			if (i < path.length && path[i] !== "." && path[i] !== "[") {
-				throw new Error(`Invalid path: ${path}. A list index must be followed by a dot, another index or the end of the path.`);
+				throw new CustomError.InvalidParameter(`Invalid path: ${path}. A list index must be followed by a dot, another index or the end of the path.`);
 			}
 			if (path[i] === ".") {
 				i++;
 			}
 		} else if (char === ".") {
-			// Dot separator - save current attribute
 			if (current) {
 				segments.push({"type": "attribute", "value": current});
 				current = "";
 			}
 			i++;
 		} else {
-			// Regular character - accumulate
 			current += char;
 			i++;
 		}
 	}
 
-	// Add any remaining attribute
 	if (current) {
 		segments.push({"type": "attribute", "value": current});
 	}
 
 	return segments;
-}
-
-/**
- * Validates an array index string
- */
-function validateArrayIndex(indexStr: string, fullPath: string): void {
-	if (!indexStr) {
-		throw new Error(`Invalid array index in path '${fullPath}': array index cannot be empty`);
-	}
-	if (!/^\d+$/.test(indexStr)) {
-		throw new Error(`Invalid array index in path '${fullPath}': '${indexStr}' must be numeric`);
-	}
-	const index = parseInt(indexStr, 10);
-	if (index < 0) {
-		throw new Error(`Invalid array index in path '${fullPath}': index must be non-negative`);
-	}
 }
 
 export type UpdatePartial<T> = Partial<T> & {
@@ -158,10 +135,6 @@ type TransactionType = {
 	update: UpdateTransaction;
 	condition: ConditionTransaction;
 };
-
-export interface schemaCorrectnessScoresSettings {
-	considerDefaults?: boolean
-}
 
 export interface ModelGetSettings {
 	return?: "item" | "request";
@@ -220,13 +193,6 @@ interface ModelInternalProperties {
 	 * This should never be called directly. Use `table()` instead.
 	 */
 	_table?: Table;
-
-	// Performance optimization caches
-	schemaAttributesCache?: Set<string>;
-	updateTypesMapCache?: Map<string, any>;
-	updateTypeNamesCache?: string[];
-	convertKeyToObjectCache?: LRUCache<string, KeyObject>;
-	attributeTypeCache?: LRUCache<string, any>;
 }
 
 // Model represents a single entity (ex. User, Movie, Video, Order)
@@ -562,16 +528,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		}
 
 		const table = this.getInternalProperties(internalProperties).table();
-		const tableInternalProperties = table.getInternalProperties(internalProperties);
-		const {instance} = tableInternalProperties;
+		const {instance} = table.getInternalProperties(internalProperties);
 
 		const keyObjects = keys.map(async (key) => this.getInternalProperties(internalProperties).convertKeyToObject(key));
 
-		const readStrict = tableInternalProperties.options.readStrict;
-		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "readStrict": readStrict});
+		const {readStrict} = table.getInternalProperties(internalProperties).options;
+		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", readStrict});
 		const prepareResponse = async (response: DynamoDB.BatchGetItemOutput): Promise<ModelBatchGetItemsResponse<ItemCarrier>> => {
-			const tmpResult = await Promise.all(response.Responses[tableInternalProperties.name].map((item) => itemify(item)));
-			const unprocessedArray = response.UnprocessedKeys[tableInternalProperties.name] ? response.UnprocessedKeys[tableInternalProperties.name].Keys : [];
+			const tmpResult = await Promise.all(response.Responses[table.getInternalProperties(internalProperties).name].map((item) => itemify(item)));
+			const unprocessedArray = response.UnprocessedKeys[table.getInternalProperties(internalProperties).name] ? response.UnprocessedKeys[this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).name].Keys : [];
 			const tmpResultUnprocessed = await Promise.all(unprocessedArray.map((item) => this.Item.fromDynamo(item)));
 			const startArray: ModelBatchGetItemsResponse<ItemCarrier> = Object.assign([], {
 				"unprocessedKeys": [],
@@ -594,20 +559,19 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		};
 
 		const getParams = async (settings: ModelBatchGetSettings): Promise<DynamoDB.BatchGetItemInput> => {
-			const tableName = tableInternalProperties.name;
 			const params: DynamoDB.BatchGetItemInput = {
 				"RequestItems": {
-					[tableName]: {
+					[table.getInternalProperties(internalProperties).name]: {
 						"Keys": (await Promise.all(keyObjects)).map((key) => this.Item.objectToDynamo(key))
 					}
 				}
 			};
 
 			if (settings.consistent !== undefined && settings.consistent !== null) {
-				params.RequestItems[tableName].ConsistentRead = settings.consistent;
+				params.RequestItems[table.getInternalProperties(internalProperties).name].ConsistentRead = settings.consistent;
 			}
 			if (settings.attributes) {
-				params.RequestItems[tableName].AttributesToGet = settings.attributes;
+				params.RequestItems[table.getInternalProperties(internalProperties).name].AttributesToGet = settings.attributes;
 			}
 
 			return params;
@@ -805,7 +769,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		const table = this.getInternalProperties(internalProperties).table();
 		const {instance} = table.getInternalProperties(internalProperties);
 		let index = 0;
-		// Track which values are already in DynamoDB format to avoid double conversion
+		// Values of nested paths, already in DynamoDB format, so the final conversion skips them
 		const alreadyConvertedValues = new Set<string>();
 		// The schema path of a nested update path: list indexes become 0, as in schema.attributes()
 		const schemaPathOf = (segments: PathSegment[]): string => segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
@@ -813,11 +777,11 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// object its path describes, convert that, and read the value back. Every list index maps to
 		// element 0, since all elements of a list share one schema. The wrapper lacks the siblings of
 		// the value, so the rules skip them (`nestedScope`): required applies below the path, and the
-		// path itself is checked separately. One conversion of the whole schema
-		// per path is the cost here, so the paths share one wrapper. A path cannot share one when one
-		// path is inside another, when it goes through a list index (elements would merge into
-		// element 0) or an attribute with several definitions (one definition would be picked for
-		// all), or when a schema-level or ancestor set or validate would see the other paths' values.
+		// path itself is checked separately. One conversion of the whole schema per path is the cost
+		// here, so the paths share one wrapper. A path cannot share one when one path is inside
+		// another, when it goes through a list index (elements would merge into element 0) or an
+		// attribute with several definitions (one definition would be picked for all), or when a
+		// schema-level or ancestor set or validate would see the other paths' values.
 		// Maps each path to its converted value, or to undefined when the schema drops it.
 		const convertNestedValues = async (entries: [string, ValueType][], settings: ObjectType): Promise<Map<string, any>> => {
 			const schemaSettings = schema.getInternalProperties(internalProperties).settings;
@@ -860,21 +824,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			return result;
 		};
 		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => (await convertNestedValues([[path, value]], settings)).get(path);
-		// The nearest ancestor of a nested path that has several definitions (`[A, B]`), if any
-		function multiTypeAncestor (segments: PathSegment[]): string | undefined {
-			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
-			for (let i = parts.length - 1; i > 0; i--) {
-				const ancestor = parts.slice(0, i).join(".");
-				try {
-					if (Array.isArray(schema.getAttributeValue(ancestor))) {
-						return ancestor;
-					}
-				} catch (e) {} // eslint-disable-line no-empty
-			}
-			return undefined;
-		}
 		// Whether an ancestor of a nested path has a set or validate rule these settings apply
-		function ancestorHasRule (segments: PathSegment[], settings: ObjectType): boolean {
+		const ancestorHasRule = (segments: PathSegment[], settings: ObjectType): boolean => {
 			const rules = [...settings.validate ? ["validate"] : [], ...settings.modifiers ?? []];
 			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
 			return parts.slice(0, -1).some((part, i) => rules.some((rule) => {
@@ -885,10 +836,23 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					return false;
 				}
 			}));
-		}
-		const isSchemaPath = (path: string): boolean => {
+		};
+		// The nearest ancestor of a nested path that has several definitions (`[A, B]`), if any
+		const multiTypeAncestor = (segments: PathSegment[]): string | undefined => {
+			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
+			for (let i = parts.length - 1; i > 0; i--) {
+				const ancestor = parts.slice(0, i).join(".");
+				try {
+					if (Array.isArray(schema.getAttributeValue(ancestor))) {
+						return ancestor;
+					}
+				} catch (e) {} // eslint-disable-line no-empty
+			}
+			return undefined;
+		};
+		const isSchemaPath = (segments: PathSegment[]): boolean => {
 			try {
-				return Boolean(schema.getAttributeValue(schemaPathOf(parsePathWithArrayIndices(path))));
+				return Boolean(schema.getAttributeValue(schemaPathOf(segments)));
 			} catch (e) {
 				return false;
 			}
@@ -901,94 +865,23 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				{"name": "$DELETE", "objectFromSchemaSettings": {"defaults": true}}
 			].reverse();
 
-			// Use cached update types map for O(1) lookups or create and cache if not exist
-			let updateTypesMap = this.getInternalProperties(internalProperties).updateTypesMapCache;
-			let updateTypeNames = this.getInternalProperties(internalProperties).updateTypeNamesCache;
-			if (!updateTypesMap) {
-				updateTypesMap = new Map(updateTypes.map((type) => [type.name, type]));
-				updateTypeNames = updateTypes.map((a) => a.name);
-				// Cache for future calls
-				this.getInternalProperties(internalProperties).updateTypesMapCache = updateTypesMap;
-				this.getInternalProperties(internalProperties).updateTypeNamesCache = updateTypeNames;
-			}
-
-			// Use cached schema attributes set for O(1) lookups or create and cache if not exist
-			let schemaAttributesSet = this.getInternalProperties(internalProperties).schemaAttributesCache;
-			let schemaAttributes: string[];
-			if (!schemaAttributesSet) {
-				schemaAttributes = schema.attributes();
-				schemaAttributesSet = new Set(schemaAttributes);
-				// Cache for future calls
-				this.getInternalProperties(internalProperties).schemaAttributesCache = schemaAttributesSet;
-			} else {
-				// Convert Set back to array for existing logic that expects an array
-				schemaAttributes = Array.from(schemaAttributesSet);
-			}
-
 			if (!updateObj) {
-				// Optimize: Use shallow copy for flat objects to avoid unnecessary deep copying
-				// Check if the object contains any nested objects that would require deep copying
-				let needsDeepCopy = false;
-
-				// Only perform optimization if keyObj is an object (not a primitive InputKey like string/number)
-				if (typeof keyObj === "object" && keyObj !== null) {
-					for (const key in keyObj) {
-						const value = keyObj[key];
-						if (value !== null && typeof value === "object") {
-							// Arrays and nested objects need deep copy
-							// Date, Buffer, and typed arrays are OK to shallow copy (immutable or copy-safe)
-							if (Array.isArray(value) ||
-							    (!(value instanceof Date) && !(value instanceof Buffer) && !ArrayBuffer.isView(value))) {
-								needsDeepCopy = true;
-								break;
-							}
-						}
-					}
-
-					if (needsDeepCopy) {
-						updateObj = utils.deep_copy(keyObj) as Partial<T>;
-					} else {
-						// Use Object.keys + for loop for best performance across all object sizes
-						updateObj = {} as Partial<T>;
-						const keys = Object.keys(keyObj);
-						for (let i = 0; i < keys.length; i++) {
-							const key = keys[i];
-							updateObj[key] = keyObj[key];
-						}
-					}
-				} else {
-					// For primitive InputKey types, use deep_copy as before
-					updateObj = utils.deep_copy(keyObj) as Partial<T>;
-				}
-
-				// Cache convertKeyToObject results for performance
-				// Use simpler cache key without expensive sorting
-				const keyObjString = JSON.stringify(keyObj);
-				let convertedKeyObj = this.getInternalProperties(internalProperties).convertKeyToObjectCache?.get(keyObjString);
-				if (!convertedKeyObj) {
-					convertedKeyObj = await this.getInternalProperties(internalProperties).convertKeyToObject(keyObj);
-					if (!this.getInternalProperties(internalProperties).convertKeyToObjectCache) {
-						// Use LRU cache with reasonable limit (200 entries)
-						this.getInternalProperties(internalProperties).convertKeyToObjectCache = new LRUCache(200);
-					}
-					this.getInternalProperties(internalProperties).convertKeyToObjectCache.set(keyObjString, convertedKeyObj);
-				}
-
-				Object.keys(convertedKeyObj).forEach((key) => delete updateObj[key]);
+				updateObj = utils.deep_copy(keyObj) as Partial<T>;
+				Object.keys(await this.getInternalProperties(internalProperties).convertKeyToObject(keyObj)).forEach((key) => delete updateObj[key]);
 			}
 
 			// The nested paths of each update type, converted together. The loop below converts any path
-			// not found here on its own.
+			// not found here on its own, and rejects a malformed one.
+			const updateTypeNames = updateTypes.map((a) => a.name);
 			const nestedValueEntries = new Map<string, [string, ValueType][]>();
 			for (const key of Object.keys(updateObj)) {
 				const isUpdateType = typeof updateObj[key] === "object" && updateTypeNames.includes(key);
 				const value = isUpdateType ? updateObj[key] : {[key]: updateObj[key]};
 				const updateTypeName = isUpdateType ? key : "$SET";
-				if (!value || Array.isArray(value) || updateTypesMap.get(updateTypeName).attributeOnly) {
+				if (!value || Array.isArray(value) || updateTypes.find((a) => a.name === updateTypeName).attributeOnly) {
 					continue;
 				}
 				for (const [subKey, subValue] of Object.entries(value)) {
-					// A path with an empty component is left to the loop, which rejects it
 					const isNestedPath = (subKey.includes("[") || subKey.includes(".")) && !subKey.split(".").some((component) => !component);
 					if (isNestedPath && subValue !== undefined && subValue !== type.UNDEFINED) {
 						nestedValueEntries.set(updateTypeName, [...nestedValueEntries.get(updateTypeName) ?? [], [subKey, subValue as ValueType]]);
@@ -997,16 +890,15 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			}
 			const convertedNestedValues = new Map<string, Map<string, any>>();
 			for (const [updateTypeName, entries] of nestedValueEntries) {
-				convertedNestedValues.set(updateTypeName, await convertNestedValues(entries, updateTypesMap.get(updateTypeName).objectFromSchemaSettings));
+				convertedNestedValues.set(updateTypeName, await convertNestedValues(entries, updateTypes.find((a) => a.name === updateTypeName).objectFromSchemaSettings));
 			}
 			const skippedNestedPaths: string[] = [];
 			let requestedWrites = 0;
-
 			const returnObject = await Object.keys(updateObj).reduce(async (accumulatorPromise, key) => {
 				const accumulator = await accumulatorPromise;
 				let value = updateObj[key];
 
-				if (!(typeof value === "object" && updateTypeNames.includes(key))) {
+				if (!(typeof value === "object" && updateTypes.map((a) => a.name).includes(key))) {
 					value = {[key]: value};
 					key = "$SET";
 				}
@@ -1016,97 +908,57 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					let subKey = valueKeys[i];
 					let subValue = value[subKey];
 
-					let updateType = updateTypesMap.get(key);
+					let updateType = updateTypes.find((a) => a.name === key);
 
 					const expressionKey = `#a${index}`;
-					// Handle array values correctly
-					// For $REMOVE arrays, the actual paths are the values in the array
-					// For other arrays, use the existing logic
-					if (Array.isArray(value)) {
-						if (updateType.name === "$REMOVE") {
-							// For $REMOVE, subValue contains the attribute path
-							subKey = subValue;
-							subValue = undefined; // $REMOVE doesn't have values
-						} else {
-							// For other array operations, use existing pattern
-							subKey = subValue;
-						}
-					}
+					subKey = Array.isArray(value) ? subValue : subKey;
 
-					// Validate dot notation paths early to provide better error messages
-					if (subKey && typeof subKey === "string" && subKey.includes(".")) {
-						const pathComponents = subKey.split(".");
-						if (pathComponents.some((component) => !component)) {
-							throw new Error(`Invalid dot notation path: ${subKey}. Path cannot have empty components.`);
-						}
+					// A nested path (`address.city`, `tags[0]`, `reps[0].name`) writes inside a top-level attribute
+					const isNestedPath = typeof subKey === "string" && (subKey.includes(".") || subKey.includes("["));
+					if (isNestedPath && subKey.split(".").some((component) => !component)) {
+						throw new CustomError.InvalidParameter(`Invalid dot notation path: ${subKey}. Path cannot have empty components.`);
 					}
-
-					// A nested path (`address.city`, `tags[0]`, `reps[0].name`) writes inside its first attribute
-					let baseAttributeName = subKey;
-					if (subKey && typeof subKey === "string" && (subKey.includes("[") || subKey.includes("."))) {
-						const segments = parsePathWithArrayIndices(subKey);
-						if (segments[0]?.type !== "attribute") {
-							throw new Error(`Invalid path: ${subKey}. Path must start with an attribute name.`);
-						}
-						baseAttributeName = segments[0].value as string;
+					const segments = isNestedPath ? parsePathWithArrayIndices(subKey) : undefined;
+					if (segments && segments[0]?.type !== "attribute") {
+						throw new CustomError.InvalidParameter(`Invalid path: ${subKey}. Path must start with an attribute name.`);
 					}
+					const attributeName = segments ? segments[0].value as string : subKey;
 
-					// Cache expensive schema.getAttributeType() calls
-					// Use pipe delimiter (|) which cannot appear in DynamoDB attribute names
-					const attributeTypeKey = `${baseAttributeName}|${typeof subValue}`;
-					let dynamoType = this.getInternalProperties(internalProperties).attributeTypeCache?.get(attributeTypeKey);
-					if (dynamoType === undefined) {
-						try {
-							dynamoType = schema.getAttributeType(baseAttributeName, subValue, {"unknownAttributeAllowed": true});
-						} catch (e) {} // eslint-disable-line no-empty
-
-						if (!this.getInternalProperties(internalProperties).attributeTypeCache) {
-							// Use LRU cache with reasonable limit (500 entries)
-							this.getInternalProperties(internalProperties).attributeTypeCache = new LRUCache(500);
-						}
-						this.getInternalProperties(internalProperties).attributeTypeCache.set(attributeTypeKey, dynamoType);
-					}
-					const attributeExists = schemaAttributesSet.has(baseAttributeName);
+					let dynamoType;
+					try {
+						dynamoType = schema.getAttributeType(attributeName, subValue, {"unknownAttributeAllowed": true});
+					} catch (e) {} // eslint-disable-line no-empty
+					const attributeExists = schema.attributes().includes(attributeName);
 					const dynamooseUndefined = type.UNDEFINED;
 					if (!updateType.attributeOnly && subValue !== dynamooseUndefined) {
-						// Check if we're updating a path with array indices or nested dot notation
-						const hasArrayIndex = subKey && typeof subKey === "string" && subKey.includes("[");
-						const hasDotNotation = subKey && typeof subKey === "string" && subKey.includes(".");
-
-						if (hasArrayIndex || hasDotNotation) {
+						if (!segments) {
+							subValue = (await this.Item.objectFromSchema({[subKey]: dynamoType === "L" && !Array.isArray(subValue) ? [subValue] : subValue}, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any))[subKey];
+						} else if (subValue !== undefined) {
 							// An undefined value stays undefined, so the path is removed below, as a top-level attribute is
-							if (subValue !== undefined) {
-								const value = subValue;
-								const converted = convertedNestedValues.get(updateType.name);
-								subValue = converted?.has(subKey) ? converted.get(subKey) : await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
-								if (subValue === undefined && !isSchemaPath(subKey)) {
-									// The schema drops this key (not declared, not covered by saveUnknown), as a full
-									// write of the parent would: skip the path, never write it as NULL
-									skippedNestedPaths.push(subKey);
-									continue;
-								}
-								// A definition of a multi-type ancestor declares this path, but none accepts the value.
-								// Removing the path below would delete the stored value instead of rejecting the write.
-								const ancestor = subValue === undefined ? multiTypeAncestor(parsePathWithArrayIndices(subKey)) : undefined;
-								if (ancestor) {
-									throw new CustomError.TypeMismatch(`${subKey} with a value of ${JSON.stringify(value)} matches no definition of ${ancestor}.`);
-								}
-								if (subValue !== undefined) {
-									// Mark this value as already converted to prevent double conversion later
-									alreadyConvertedValues.add(`:v${index}`);
-								}
+							const originalValue = subValue;
+							const converted = convertedNestedValues.get(updateType.name);
+							subValue = converted?.has(subKey) ? converted.get(subKey) : await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
+							if (subValue === undefined && !isSchemaPath(segments)) {
+								// The schema drops this key (not declared, not covered by saveUnknown), as a full
+								// write of the parent would: skip the path, never write it as NULL
+								skippedNestedPaths.push(subKey);
+								continue;
 							}
-						} else {
-							// Original logic for simple top-level attributes like "name", "age"
-							const schemaObj = {[baseAttributeName]: dynamoType === "L" && !Array.isArray(subValue) ? [subValue] : subValue};
-							const convertedObj = await this.Item.objectFromSchema(schemaObj, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...updateType.objectFromSchemaSettings} as any);
-							subValue = convertedObj[baseAttributeName];
+							// A definition of a multi-type ancestor declares this path, but none accepts the value.
+							// Removing the path below would delete the stored value instead of rejecting the write.
+							const ancestor = subValue === undefined ? multiTypeAncestor(segments) : undefined;
+							if (ancestor) {
+								throw new CustomError.TypeMismatch(`${subKey} with a value of ${JSON.stringify(originalValue)} matches no definition of ${ancestor}.`);
+							}
+							if (subValue !== undefined) {
+								alreadyConvertedValues.add(`:v${index}`);
+							}
 						}
 					}
 
 					if (subValue === dynamooseUndefined || subValue === undefined) {
 						if (attributeExists) {
-							updateType = updateTypesMap.get("$REMOVE");
+							updateType = updateTypes.find((a) => a.name === "$REMOVE");
 						} else {
 							continue;
 						}
@@ -1115,9 +967,9 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					// The default and required checks apply to the attribute this path writes. For a
 					// nested path that is the nested attribute, not the top-level parent, which stays
 					// on the item. A nested path the schema does not describe has nothing to check.
-					let checkAttributeName: string | undefined = baseAttributeName;
-					if (subKey !== baseAttributeName) {
-						checkAttributeName = schemaPathOf(parsePathWithArrayIndices(subKey));
+					let checkAttributeName: string | undefined = subKey;
+					if (segments) {
+						checkAttributeName = schemaPathOf(segments);
 						try {
 							schema.getAttributeValue(checkAttributeName);
 						} catch (e) {
@@ -1128,12 +980,12 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					if (subValue !== dynamooseUndefined && checkAttributeName) {
 						const defaultValue = await schema.defaultCheck(checkAttributeName, undefined, updateType.objectFromSchemaSettings);
 						if (defaultValue) {
-							updateType = updateTypesMap.get("$SET");
-							if (subKey === baseAttributeName) {
-								subValue = defaultValue;
-							} else {
+							updateType = updateTypes.find((a) => a.name === "$SET");
+							if (segments) {
 								subValue = await convertNestedValue(subKey, defaultValue, updateType.objectFromSchemaSettings);
 								alreadyConvertedValues.add(`:v${index}`);
+							} else {
+								subValue = defaultValue;
 							}
 						}
 					}
@@ -1143,67 +995,35 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					}
 
 					let expressionValue = updateType.attributeOnly ? "" : `:v${index}`;
-					let finalExpressionKey = expressionKey;
-
-					// Handle paths with dot notation and/or array indices
-					if (subKey && typeof subKey === "string" && (subKey.includes(".") || subKey.includes("["))) {
-						// Parse the path to handle both dot notation and array indices
-						const segments = parsePathWithArrayIndices(subKey);
-
-						// Build expression incrementally for better performance
-						const expressionBuilder: string[] = [];
-						let currentIndex = index;
-						let previousWasAttribute = false;
-						let previousWasIndex = false;
-
-						for (const segment of segments) {
-							if (segment.type === "attribute") {
-								// Add dot separator between consecutive attributes or after an index
-								if (previousWasAttribute || previousWasIndex) {
-									expressionBuilder.push(".");
-								}
-
-								// Create expression attribute name
-								const componentKey = `#a${currentIndex}`;
-								accumulator.ExpressionAttributeNames[componentKey] = segment.value as string;
-								expressionBuilder.push(componentKey);
-								currentIndex++;
-
-								// Track state for next iteration
-								previousWasAttribute = true;
-								previousWasIndex = false;
-							} else if (segment.type === "index") {
-								// Array indices remain literal in the expression
-								expressionBuilder.push(`[${segment.value}]`);
-
-								// Track state for next iteration
-								previousWasAttribute = false;
-								previousWasIndex = true;
+					// The expression path: one name per attribute, list indexes stay literal (`#a0[1].#a1`).
+					// Value :vN goes with the first name, #aN.
+					let expressionPath = expressionKey;
+					if (segments) {
+						expressionPath = segments.map((segment, i) => {
+							if (segment.type === "index") {
+								return `[${segment.value}]`;
 							}
-						}
-
-						// Join all parts to create the final expression
-						finalExpressionKey = expressionBuilder.join("");
-
-						// Adjust the index for next iteration
-						index = currentIndex - 1; // -1 because index++ happens at the end of the loop
+							const nameKey = `#a${index}`;
+							accumulator.ExpressionAttributeNames[nameKey] = segment.value;
+							index++;
+							return `${i === 0 ? "" : "."}${nameKey}`;
+						}).join("");
+						index--;
 					} else {
-						// Original behavior for simple keys
 						accumulator.ExpressionAttributeNames[expressionKey] = subKey;
 					}
-
 					if (!updateType.attributeOnly) {
 						accumulator.ExpressionAttributeValues[expressionValue] = subValue;
 					}
 
 					if (dynamoType === "L" && updateType.name === "$ADD") {
-						expressionValue = `list_append(${finalExpressionKey}, ${expressionValue})`;
-						updateType = updateTypesMap.get("$SET");
+						expressionValue = `list_append(${expressionPath}, ${expressionValue})`;
+						updateType = updateTypes.find((a) => a.name === "$SET");
 					}
 
 					const operator = updateType.operator || (updateType.attributeOnly ? "" : " ");
 
-					accumulator.UpdateExpression[updateType.name.slice(1)].push(`${finalExpressionKey}${operator}${expressionValue}`);
+					accumulator.UpdateExpression[updateType.name.slice(1)].push(`${expressionPath}${operator}${expressionValue}`);
 					requestedWrites++;
 
 					index++;
@@ -1224,7 +1044,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				const defaultObjectFromSchema = await this.Item.objectFromSchema(await this.Item.prepareForObjectFromSchema({}, this, itemFunctionSettings), this, itemFunctionSettings);
 				Object.keys(defaultObjectFromSchema).forEach((key) => {
 					const value = defaultObjectFromSchema[key];
-					const updateType = updateTypesMap.get("$SET");
+					const updateType = updateTypes.find((a) => a.name === "$SET");
 
 					obj.ExpressionAttributeNames[`#a${index}`] = key;
 					obj.ExpressionAttributeValues[`:v${index}`] = value;
@@ -1240,111 +1060,72 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			// after it are nested path components, which can share a name with a top-level attribute.
 			const topLevelNameKeys = new Map<string, string>();
 			for (const term of Object.values(returnObject.UpdateExpression).flat() as string[]) {
-				const key = term.match(/^#a\d+/u)?.[0];
-				if (key) {
-					topLevelNameKeys.set(returnObject.ExpressionAttributeNames[key], key);
-				}
-			}
-			const setAndRemoveExpressions = [...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", ");
-			// Every attribute name referenced anywhere in the update, across all four expression groups.
-			// The key guard below has to see $ADD and $DELETE as well, otherwise a source can be written
-			// while the key combined from it stays behind.
-			const referencedExpressionKeys = new Set<string>(Object.values(returnObject.UpdateExpression).flat().join(", ").match(/#a\d+/g) ?? []);
-
-			// Single pass through schema attributes to find and process combine types
-			const combineAttributes = [];
-			for (const attribute of schemaAttributes) {
-				const type = schema.getInternalProperties(internalProperties).getSharedAttributeTypeDetails(attribute);
-				const isCombineType = Array.isArray(type) ? type.some((t) => t.name === "Combine") : type.name === "Combine";
-
-				if (isCombineType) {
-					if (Array.isArray(type)) {
-						throw new CustomError.InvalidParameter("Combine type is not allowed to be used with multiple types.");
-					}
-					combineAttributes.push({attribute, type});
+				const nameKey = term.match(/^#a\d+/u)?.[0];
+				if (nameKey) {
+					topLevelNameKeys.set(returnObject.ExpressionAttributeNames[nameKey], nameKey);
 				}
 			}
 
-			const hashKeyName = this.getInternalProperties(internalProperties).getHashKey();
-			const rangeKeyName = this.getInternalProperties(internalProperties).getRangeKey();
+			schema.attributes().map((attribute) => ({attribute, "type": schema.getInternalProperties(internalProperties).getSharedAttributeTypeDetails(attribute)})).filter((item: any) => {
+				return Array.isArray(item.type) ? item.type.some((type) => type.name === "Combine") : item.type.name === "Combine";
+			}).map((details) => {
+				const {type} = details;
 
-			// Process combine attributes efficiently
-			for (const details of combineAttributes) {
-				// A combine attribute that IS the primary key can never be updated: DynamoDB rejects any
-				// SET on a key attribute ("This attribute is part of the key"), and the key is already
-				// fully specified in `Key`. Applying the rules below to it makes every update on such a
-				// schema impossible — the all-or-none check demands the sources, and supplying them then
-				// forces the very SET DynamoDB refuses. The key's sources are immutable for the same
-				// reason, so updating them is rejected explicitly rather than silently desynced from the
-				// key it is derived from.
-				if (details.attribute === hashKeyName || details.attribute === rangeKeyName) {
-					const keySourcesBeingUpdated = details.type.typeSettings.attributes.filter((attr) => {
-						const expressionKey = topLevelNameKeys.get(attr);
-						return expressionKey && referencedExpressionKeys.has(expressionKey);
-					});
+				if (Array.isArray(type)) {
+					throw new CustomError.InvalidParameter("Combine type is not allowed to be used with multiple types.");
+				}
 
-					if (keySourcesBeingUpdated.length > 0) {
-						throw new CustomError.InvalidParameter(`You cannot update the combine attributes of ${details.attribute} because it is part of the key. Remove them from the update: ${keySourcesBeingUpdated.join(", ")}.`);
+				return details;
+			}).forEach((details: any) => {
+				// A combine attribute that is the hash or range key is never written: the key is already in
+				// `Key`, and DynamoDB rejects a SET on a key attribute. Its sources are immutable for the same
+				// reason, so an update to any of them, through any update type, is rejected.
+				if (details.attribute === this.getInternalProperties(internalProperties).getHashKey() || details.attribute === this.getInternalProperties(internalProperties).getRangeKey()) {
+					const referencedNameKeys = new Set(Object.values(returnObject.UpdateExpression).flat().join(", ").match(/#a\d+/gu) || []);
+					const updatedSources = details.type.typeSettings.attributes.filter((attribute) => referencedNameKeys.has(topLevelNameKeys.get(attribute)));
+					if (updatedSources.length > 0) {
+						throw new CustomError.InvalidParameter(`You cannot update the combine attributes of ${details.attribute} because it is part of the key. Remove them from the update: ${updatedSources.join(", ")}.`);
 					}
-
-					continue;
+					return;
 				}
 
 				// An update that writes none of the sources leaves the combine attribute as it is
-				if (!details.type.typeSettings.attributes.some((attr) => topLevelNameKeys.has(attr))) {
-					continue;
+				if (!details.type.typeSettings.attributes.some((attribute) => topLevelNameKeys.has(attribute))) {
+					return;
 				}
 
-				const invalidAttributes = [];
-
-				// Check validity of all combine attributes
-				for (const attr of details.type.typeSettings.attributes) {
-					const expressionKey = topLevelNameKeys.get(attr);
-					const doesExist = Boolean(expressionKey);
-					const isValid = doesExist && setAndRemoveExpressions.includes(expressionKey);
+				const {invalidAttributes} = details.type.typeSettings.attributes.reduce((result, attribute) => {
+					const expressionAttributeNameKey = topLevelNameKeys.get(attribute);
+					const doesExist = Boolean(expressionAttributeNameKey);
+					const isValid = doesExist && [...returnObject.UpdateExpression.SET, ...returnObject.UpdateExpression.REMOVE].join(", ").includes(expressionAttributeNameKey);
 
 					if (!isValid) {
-						invalidAttributes.push(attr);
+						result.invalidAttributes.push(attribute);
 					}
-				}
+
+					return result;
+				}, {"invalidAttributes": []});
 
 				if (invalidAttributes.length > 0) {
 					throw new CustomError.InvalidParameter(`You must update all or none of the combine attributes when running Model.update. Missing combine attributes: ${invalidAttributes.join(", ")}.`);
 				} else {
-					// More efficient next index calculation
-					let maxIndex = -1;
-					for (const key of Object.keys(returnObject.ExpressionAttributeNames)) {
-						const indexNum = parseInt(key.replace("#a", ""));
-						if (indexNum > maxIndex) maxIndex = indexNum;
-					}
-					const nextIndex = maxIndex + 1;
-
+					const nextIndex = Math.max(...Object.keys(returnObject.ExpressionAttributeNames).map((key) => parseInt(key.replace("#a", "")))) + 1;
 					returnObject.ExpressionAttributeNames[`#a${nextIndex}`] = details.attribute;
-
-					// Efficient value collection using the map we already have
-					const combinedValues = [];
-					for (const attribute of details.type.typeSettings.attributes) {
-						const expressionKey = topLevelNameKeys.get(attribute);
-						if (expressionKey) {
-							const valueKey = expressionKey.replace("#a", ":v");
-							const value = returnObject.ExpressionAttributeValues[valueKey];
-							if (typeof value !== "undefined" && value !== null) {
-								combinedValues.push(value);
-							}
-						}
-					}
-
-					returnObject.ExpressionAttributeValues[`:v${nextIndex}`] = combinedValues.join(details.type.typeSettings.separator);
+					returnObject.ExpressionAttributeValues[`:v${nextIndex}`] = details.type.typeSettings.attributes.map((attribute) => {
+						return returnObject.ExpressionAttributeValues[topLevelNameKeys.get(attribute).replace("#a", ":v")];
+					}).filter((value) => typeof value !== "undefined" && value !== null).join(details.type.typeSettings.separator);
 					returnObject.UpdateExpression.SET.push(`#a${nextIndex} = :v${nextIndex}`);
 					topLevelNameKeys.set(details.attribute, `#a${nextIndex}`);
 				}
-			}
+			});
 
-			// A nested forced default is applied when its parent is written, never as a top-level attribute
-			await Promise.all(schemaAttributes.filter((attribute) => !attribute.includes(".")).map(async (attribute) => {
+			// A nested forced default is applied when its parent is written. schema.attributes() lists
+			// nested attributes by dotted path, and writing one here would create a top-level
+			// attribute literally named after that path.
+			await Promise.all(schema.attributes().filter((attribute) => !attribute.includes(".")).map(async (attribute) => {
 				const defaultValue = await schema.defaultCheck(attribute, undefined, {"forceDefault": true});
 				if (defaultValue && !topLevelNameKeys.has(attribute)) {
-					const updateType = updateTypesMap.get("$SET");
+					const updateType = updateTypes.find((a) => a.name === "$SET");
 
 					returnObject.ExpressionAttributeNames[`#a${index}`] = attribute;
 					returnObject.ExpressionAttributeValues[`:v${index}`] = defaultValue;
@@ -1354,28 +1135,18 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				}
 			}));
 
-			// Value :vN belongs to name #aN. Nested values are converted already, so every value left
-			// here belongs to a top-level attribute.
+			// Value :vN belongs to name #aN. Pairing them by position instead breaks as soon as a name
+			// has no value ($REMOVE), and types a value by another attribute's schema.
 			Object.entries(returnObject.ExpressionAttributeValues).forEach(([valueKey, value]: [string, ValueType]) => {
+				// A nested value is converted already, by the schema of its own path
 				if (alreadyConvertedValues.has(valueKey)) {
 					return;
 				}
 				const attribute: string = returnObject.ExpressionAttributeNames[valueKey.replace(":v", "#a")];
-				// Cache expensive schema.getAttributeType() calls
-				// Use pipe delimiter (|) which cannot appear in DynamoDB attribute names
-				const attributeTypeKey = `${attribute}|${typeof value}`;
-				let dynamoType = this.getInternalProperties(internalProperties).attributeTypeCache?.get(attributeTypeKey);
-				if (dynamoType === undefined) {
-					try {
-						dynamoType = schema.getAttributeType(attribute, value, {"unknownAttributeAllowed": true});
-					} catch (e) {} // eslint-disable-line no-empty
-
-					if (!this.getInternalProperties(internalProperties).attributeTypeCache) {
-						// Use LRU cache with reasonable limit (500 entries)
-						this.getInternalProperties(internalProperties).attributeTypeCache = new LRUCache(500);
-					}
-					this.getInternalProperties(internalProperties).attributeTypeCache.set(attributeTypeKey, dynamoType);
-				}
+				let dynamoType;
+				try {
+					dynamoType = schema.getAttributeType(attribute, value, {"unknownAttributeAllowed": true});
+				} catch (e) {} // eslint-disable-line no-empty
 				const attributeType = Schema.attributeTypes.findDynamoDBType(dynamoType) as DynamoDBSetTypeResult;
 
 				if (attributeType?.toDynamo && !attributeType.isOfType(value, "fromDynamo")) {
@@ -1383,31 +1154,16 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				}
 			});
 
-			// Only convert values that aren't already in DynamoDB format
 			const valuesToConvert = {};
-			const alreadyConverted = {};
-			for (const [key, value] of Object.entries(returnObject.ExpressionAttributeValues)) {
-				if (alreadyConvertedValues.has(key)) {
-					alreadyConverted[key] = value;
-				} else {
-					valuesToConvert[key] = value;
-				}
-			}
-			const convertedValues = this.Item.objectToDynamo(valuesToConvert);
-			returnObject.ExpressionAttributeValues = {...convertedValues, ...alreadyConverted};
+			const convertedValues = {};
+			Object.entries(returnObject.ExpressionAttributeValues).forEach(([valueKey, value]) => {
+				(alreadyConvertedValues.has(valueKey) ? convertedValues : valuesToConvert)[valueKey] = value;
+			});
+			returnObject.ExpressionAttributeValues = {...this.Item.objectToDynamo(valuesToConvert), ...convertedValues};
 			if (Object.keys(returnObject.ExpressionAttributeValues).length === 0) {
 				delete returnObject.ExpressionAttributeValues;
 			}
 
-			const updateExpression = Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
-				const value = returnObject.UpdateExpression[key];
-
-				if (value.length > 0) {
-					return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
-				} else {
-					return accumulator;
-				}
-			}, "");
 			// Timestamps and forced defaults alone would let the update succeed without anything it asked for
 			if (requestedWrites === 0 && skippedNestedPaths.length > 0) {
 				throw new CustomError.InvalidParameter(`Nothing to update: the schema does not declare ${skippedNestedPaths.join(", ")}.`);
@@ -1415,12 +1171,20 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 			return {
 				...returnObject,
-				"UpdateExpression": updateExpression
+				"UpdateExpression": Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
+					const value = returnObject.UpdateExpression[key];
+
+					if (value.length > 0) {
+						return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
+					} else {
+						return accumulator;
+					}
+				}, "")
 			};
 		};
 
-		const readStrict = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options.readStrict;
-		const itemify = (item): Promise<any> => new this.Item(item, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "type": "fromDynamo", "saveUnknown": true, "readStrict": readStrict});
+		const {readStrict} = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options;
+		const itemify = (item): Promise<any> => new this.Item(item, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "type": "fromDynamo", "saveUnknown": true, readStrict});
 		const localSettings: ModelUpdateSettings = settings;
 		const updateItemParamsPromise: Promise<DynamoDB.UpdateItemInput> = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).pendingTaskPromise().then(async () => ({
 			"Key": this.Item.objectToDynamo(await this.getInternalProperties(internalProperties).convertKeyToObject(keyObj)),
@@ -1549,8 +1313,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			settings = {"return": "item"};
 		}
 
-		const readStrict = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options.readStrict;
-		const conformToSchemaSettings: ItemObjectFromSchemaSettings = {"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true, "readStrict": readStrict};
+		const {readStrict} = this.getInternalProperties(internalProperties).table().getInternalProperties(internalProperties).options;
+		const conformToSchemaSettings: ItemObjectFromSchemaSettings = {"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true, readStrict};
 		const itemify = (item: AttributeMap): Promise<ItemCarrier> => new this.Item(item as any, {"type": "fromDynamo"}).conformToSchema(conformToSchemaSettings);
 		const table = this.getInternalProperties(internalProperties).table();
 
@@ -1601,20 +1365,6 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 	// Serialize Many
 	serializeMany (itemsArray: ModelType<ItemCarrier>[] = [], nameOrOptions: SerializerOptions | string): any {
 		return this.serializer.getInternalProperties(internalProperties).serializeMany(itemsArray, nameOrOptions);
-	}
-
-	/**
-	 * Clear all performance caches for this model.
-	 * This should be called when schema or model configuration changes
-	 * to prevent stale cached data.
-	 */
-	clearCache (): void {
-		const props = this.getInternalProperties(internalProperties);
-		props.schemaAttributesCache = undefined;
-		props.updateTypesMapCache = undefined;
-		props.updateTypeNamesCache = undefined;
-		props.convertKeyToObjectCache?.clear();
-		props.attributeTypeCache?.clear();
 	}
 }
 

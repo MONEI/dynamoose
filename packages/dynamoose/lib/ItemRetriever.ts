@@ -66,8 +66,8 @@ abstract class ItemRetriever extends InternalPropertiesClass<ItemRetrieverIntern
 					[`${this.getInternalProperties(internalProperties).internalSettings.typeInformation.pastTense}Count`]: result[`${utils.capitalize_first_letter(this.getInternalProperties(internalProperties).internalSettings.typeInformation.pastTense)}Count`]
 				};
 			}
-			const readStrict = table.getInternalProperties(internalProperties).options.readStrict;
-			const array: any = (await Promise.all(result.Items.map(async (item) => await new model.Item(item, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true, "readStrict": readStrict})))).filter((a) => Boolean(a));
+			const {readStrict} = table.getInternalProperties(internalProperties).options;
+			const array: any = (await Promise.all(result.Items.map(async (item) => await new model.Item(item, {"type": "fromDynamo"}).conformToSchema({"customTypesDynamo": true, "checkExpiredItem": true, "saveUnknown": true, "modifiers": ["get"], "type": "fromDynamo", "mapAttributes": true, readStrict})))).filter((a) => Boolean(a));
 			array.lastKey = result.LastEvaluatedKey ? Array.isArray(result.LastEvaluatedKey) ? result.LastEvaluatedKey.map((key) => model.Item.fromDynamo(key)) : model.Item.fromDynamo(result.LastEvaluatedKey) : undefined;
 			array.count = result.Count;
 			array[`${this.getInternalProperties(internalProperties).internalSettings.typeInformation.pastTense}Count`] = result[`${utils.capitalize_first_letter(this.getInternalProperties(internalProperties).internalSettings.typeInformation.pastTense)}Count`];
@@ -98,7 +98,7 @@ abstract class ItemRetriever extends InternalPropertiesClass<ItemRetrieverIntern
 							timesRequested++;
 							result = utils.merge_objects(result, nextRequest);
 							// The operation below is safe because right above we are overwriting the entire `result` variable, so there is no chance it'll be reassigned based on an outdated value since it's already been overwritten. There might be a better way to do this than ignoring the rule on the line below.
-							result.LastEvaluatedKey = nextRequest.LastEvaluatedKey;
+							result.LastEvaluatedKey = nextRequest.LastEvaluatedKey; // eslint-disable-line require-atomic-updates
 							lastKey = nextRequest.LastEvaluatedKey;
 							requestedTimes++;
 						}
@@ -313,7 +313,7 @@ export interface Scan<T> extends ItemRetriever, BasicOperators<Scan<T>> {
 	exec(callback: CallbackType<ScanResponse<T>, any>): void;
 }
 
-export class Scan<T> extends ItemRetriever {
+export class Scan<T> extends ItemRetriever { // eslint-disable-line @typescript-eslint/no-unsafe-declaration-merging
 	exec (callback?: CallbackType<ScanResponse<T>, any>): Promise<ScanResponse<T>> | void {
 		return super.exec(callback);
 	}
@@ -333,7 +333,7 @@ export interface Query<T> extends ItemRetriever, BasicOperators<Query<T>> {
 	exec(callback: CallbackType<QueryResponse<T>, any>): void;
 }
 
-export class Query<T> extends ItemRetriever {
+export class Query<T> extends ItemRetriever { // eslint-disable-line @typescript-eslint/no-unsafe-declaration-merging
 	exec (callback?: CallbackType<QueryResponse<T>, any>): Promise<QueryResponse<T>> | void {
 		return super.exec(callback);
 	}

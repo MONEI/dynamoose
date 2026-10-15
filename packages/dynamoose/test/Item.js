@@ -121,9 +121,9 @@ describe("Item", () => {
 					return putItemFunction();
 				}
 			});
-			User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
+			User = dynamoose.model("User", {"id": Number, "name": String});
 			new dynamoose.Table("User", [User]);
-			user = new User({"id": 1, "name": "Charlie", "birthday": new Date(10000)});
+			user = new User({"id": 1, "name": "Charlie"});
 		});
 		afterEach(() => {
 			dynamoose.Table.defaults.set({});
@@ -148,7 +148,7 @@ describe("Item", () => {
 					putItemFunction = () => Promise.resolve();
 					await callType.func(user).bind(user)();
 					expect(putParams).toEqual([{
-						"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": `${new Date(10000).getTime()}`}},
+						"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}},
 						"TableName": "User"
 					}]);
 				});
@@ -165,7 +165,7 @@ describe("Item", () => {
 					expect(resultA).toEqual(user);
 					expect(resultB).toEqual(robot);
 					expect(putParams).toEqual([{
-						"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": `${new Date(10000).getTime()}`}},
+						"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}},
 						"TableName": "User"
 					}, {
 						"Item": {"id": {"N": "2"}, "built": {"N": `${date}`}},
@@ -203,14 +203,70 @@ describe("Item", () => {
 					expect(result.toJSON()).toEqual({"id": 1, "name": "Charlie", "defaultValue": "Hello World"});
 				});
 
+				it("Should return Date attributes as Date objects after saving", async () => {
+					putItemFunction = () => Promise.resolve();
+					User = dynamoose.model("User", {"id": Number, "birthday": Date});
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1, "birthday": new Date(10000)});
+
+					const result = await callType.func(user).bind(user)();
+					expect(putParams).toEqual([{
+						"Item": {"id": {"N": "1"}, "birthday": {"N": "10000"}},
+						"TableName": "User"
+					}]);
+					expect(result.birthday).toBeInstanceOf(Date);
+					expect(result.birthday.getTime()).toEqual(10000);
+				});
+
+				it("Should return item with get modifiers applied after saving", async () => {
+					putItemFunction = () => Promise.resolve();
+					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "set": (value) => `${value}-set`, "get": (value) => value.replace(/-set$/, "")}});
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1, "name": "Charlie"});
+
+					const result = await callType.func(user).bind(user)();
+					expect(putParams[0].Item.name).toEqual({"S": "Charlie-set"});
+					expect(result.toJSON()).toEqual({"id": 1, "name": "Charlie"});
+				});
+
+				it("Should not apply set modifier twice when saving the same item twice", async () => {
+					putItemFunction = () => Promise.resolve();
+					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "set": (value) => `${value}-set`, "get": (value) => `${value}-get`}});
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1, "name": "Charlie"});
+
+					await callType.func(user).bind(user)();
+					await callType.func(user).bind(user)();
+					expect(putParams.map((params) => params.Item.name)).toEqual([{"S": "Charlie-set"}, {"S": "Charlie-set"}]);
+					expect(user.name).toEqual("Charlie");
+				});
+
+				it("Should not modify the item if return request is set", async () => {
+					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "get": (value) => value.toUpperCase()}});
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1, "name": "Charlie"});
+
+					await callType.func(user).bind(user)({"return": "request"});
+					expect(user.toJSON()).toEqual({"id": 1, "name": "Charlie"});
+				});
+
+				it("Should not modify the item if saving fails", async () => {
+					putItemFunction = () => Promise.reject({"error": "Error"});
+					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "get": (value) => value.toUpperCase()}});
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1, "name": "Charlie"});
+
+					await expect(callType.func(user).bind(user)()).rejects.toEqual({"error": "Error"});
+					expect(user.toJSON()).toEqual({"id": 1, "name": "Charlie"});
+				});
+
 				it("Should return request if return request is set as setting", async () => {
 					const result = await callType.func(user).bind(user)({"return": "request"});
 					expect(putParams).toEqual([]);
 					expect(result).toEqual({
 						"Item": {
 							"id": {"N": "1"},
-							"name": {"S": "Charlie"},
-							"birthday": {"N": `${new Date(10000).getTime()}`}
+							"name": {"S": "Charlie"}
 						},
 						"TableName": "User"
 					});
@@ -810,7 +866,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -840,7 +896,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -878,7 +934,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -914,7 +970,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -954,7 +1010,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -998,7 +1054,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -1040,7 +1096,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -1089,7 +1145,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -1130,7 +1186,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -1157,7 +1213,7 @@ describe("Item", () => {
 
 					await utils.timeout(5);
 
-					user.name = "Bob";
+					user.name = "Bob"; // eslint-disable-line require-atomic-updates
 					await callType.func(user).bind(user)();
 
 					expect(putParams[1].TableName).toEqual("User");
@@ -1722,7 +1778,7 @@ describe("Item", () => {
 						error = e;
 					}
 					expect(putParams).toEqual([{
-						"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": `${new Date(10000).getTime()}`}},
+						"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}},
 						"TableName": "User"
 					}]);
 					expect(result).not.toBeDefined();

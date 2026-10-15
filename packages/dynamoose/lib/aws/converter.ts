@@ -7,45 +7,32 @@ type ConverterType = {
 	convertToNative: typeof DynamoDBUtil.convertToNative;
 };
 
-// Fast path for primitive type conversions
-// These match AWS SDK behavior exactly but avoid function call overhead
-const fastConvertToAttr = (value: any): any => {
-	// Handle primitive types with fast paths
-	const type = typeof value;
-
-	// String fast path
-	if (type === "string") {
-		return {"S": value};
-	}
-
-	// Number fast path (including NaN and Infinity handling)
-	if (type === "number") {
-		// AWS SDK converts NaN and Infinity to strings
-		if (Number.isNaN(value) || !Number.isFinite(value)) {
-			return {"S": String(value)};
+// Gives the same result as DynamoDBUtil.convertToAttr for strings, safe numbers, booleans and null, without the SDK's chain of type checks.
+// Other values (including NaN, Infinity, unsafe integers and undefined, which the SDK rejects) and calls with options go to the SDK.
+const convertToAttr = (value: Parameters<typeof DynamoDBUtil.convertToAttr>[0], options?: Parameters<typeof DynamoDBUtil.convertToAttr>[1]): ReturnType<typeof DynamoDBUtil.convertToAttr> => {
+	if (options === undefined) {
+		const type = typeof value;
+		if (type === "string") {
+			return {"S": value};
 		}
-		return {"N": String(value)};
+		if (type === "number" && Number.isFinite(value) && value <= Number.MAX_SAFE_INTEGER && value >= Number.MIN_SAFE_INTEGER) {
+			return {"N": value.toString()};
+		}
+		if (type === "boolean") {
+			return {"BOOL": value};
+		}
+		if (value === null) {
+			return {"NULL": true};
+		}
 	}
-
-	// Boolean fast path
-	if (type === "boolean") {
-		return {"BOOL": value};
-	}
-
-	// Null/undefined fast path
-	if (value === null || value === undefined) {
-		return {"NULL": true};
-	}
-
-	// For all other types (objects, arrays, dates, etc.), use the full converter
-	return DynamoDBUtil.convertToAttr(value);
+	return DynamoDBUtil.convertToAttr(value, options);
 };
 
 let customConverter: ConverterType | undefined;
 const defaultConverter: ConverterType = {
 	"marshall": DynamoDBUtil.marshall,
 	"unmarshall": DynamoDBUtil.unmarshall,
-	"convertToAttr": fastConvertToAttr, // Use fast path version
+	"convertToAttr": convertToAttr,
 	"convertToNative": DynamoDBUtil.convertToNative
 };
 function main (): ConverterType {

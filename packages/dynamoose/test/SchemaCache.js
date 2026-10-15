@@ -6,6 +6,7 @@ const {internalProperties} = Internal.General;
 // operations with dynamoose-baseline; these tests pin the cache rules that a corpus case can miss.
 describe("Schema lookup cache", () => {
 	const lookupCache = (schema) => schema.getInternalProperties(internalProperties).lookupCache;
+	const cachedValues = (schema) => lookupCache(schema) ? lookupCache(schema).values : new Map();
 	const model = (name, schema, options = {}) => dynamoose.model(name, schema, {"create": false, "waitForActive": false, ...options});
 
 	// A key per list index would grow the cache with the length of every list an item holds.
@@ -98,7 +99,7 @@ describe("Schema lookup cache", () => {
 	// The inherited-key test below guards the own-property check; this one guards misses and throws.
 	it("Should add no entry for a miss or a thrown error", () => {
 		const schema = new dynamoose.Schema({"id": String, "address": {"type": Object, "schema": {"city": String}}}, {"saveUnknown": true});
-		const sizes = () => lookupCache(schema)?.values?.size ?? 0;
+		const sizes = () => cachedValues(schema).size;
 		const before = sizes();
 
 		expect(schema.getAttributeValue("unknown")).toBeUndefined();
@@ -151,8 +152,8 @@ describe("Schema lookup cache", () => {
 			value.getAttributeValue("constructor");
 			value.getAttributeValue("address.toString");
 			value.getAttributeTypeDetails("constructor");
-			expect(lookupCache(value)?.values?.has("constructor") ?? false).toEqual(false);
-			expect(lookupCache(value)?.values?.has("address.toString") ?? false).toEqual(false);
+			expect(cachedValues(value).has("constructor")).toEqual(false);
+			expect(cachedValues(value).has("address.toString")).toEqual(false);
 		});
 
 		it("Should resolve an attribute named constructor that the schema defines", () => {
@@ -192,7 +193,7 @@ describe("Schema lookup cache", () => {
 		};
 
 		// The getAttributeValue and getAttributeSettingValue terms of the guard are checked by the corpus case
-		// "replaced Schema lookup methods": a skipped call there shows only against 4.2.4.
+		// "replaced Schema lookup methods": a skipped call there shows only against the published build.
 		it("Should call a replaced getAttributeTypeDetails on every save", async () => {
 			const Cat = model("CacheSpyTypeDetails", {"id": String, "name": String, "tags": {"type": Set, "schema": [String]}});
 			await Cat.create({"id": "0", "name": "a", "tags": ["a"]}, {"return": "request"});
@@ -248,10 +249,10 @@ describe("Schema lookup cache", () => {
 		expect(request.Item.address).toEqual({"M": {"street": {"S": "s"}, "created": {"N": "5"}}});
 	});
 
-	// Accepted, documented difference from 4.2.4 (PENDING_CHANGELOG.md, CLAUDE.md): the constructor copies
-	// only the top level of the definition, so nested definition objects stay shared with the caller. 4.2.4
-	// sees a nested definition the caller adds or replaces after the constructor; the cache does not.
-	// If this test fails, the difference is gone: update the changelog and CLAUDE.md.
+	// Accepted, documented difference (PENDING_CHANGELOG.md, the caution in the Schema docs): the constructor
+	// copies only the top level of the definition, so nested definition objects stay shared with the caller.
+	// Without the cache, a lookup sees a nested definition the caller adds or replaces after the constructor;
+	// with the cache it does not. If this test fails, the difference is gone: update the changelog and the docs.
 	it("Should not see a nested definition replaced after the constructor (accepted difference)", () => {
 		const definition = {"id": String, "address": {"type": Object, "schema": {"city": String}}};
 		const schema = new dynamoose.Schema(definition);
@@ -259,7 +260,7 @@ describe("Schema lookup cache", () => {
 		definition.address.schema.city = Number;
 		definition.address.schema.zip = String;
 
-		expect(schema.getAttributeType("address.city")).toEqual("S"); // 4.2.4: "N"
-		expect(schema.attributes()).toEqual(["id", "address", "address.city"]); // 4.2.4: also "address.zip"
+		expect(schema.getAttributeType("address.city")).toEqual("S"); // without the cache: "N"
+		expect(schema.attributes()).toEqual(["id", "address", "address.city"]); // without the cache: also "address.zip"
 	});
 });
