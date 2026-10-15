@@ -3245,6 +3245,82 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"n": {"N": "1"}}}});
 				});
 
+				it("Should not run a parent's validate on a nested $SET, since the parent holds only the written key", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"required1": {"type": String, "required": true}, "other": String}, "validate": (val) => typeof val.required1 === "string"}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.other": "o2"}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "o2"}});
+				});
+
+				it("Should not run a parent's set modifier on a nested $SET", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"n": Number, "flag": {"type": Boolean, "validate": (val) => val === true}}, "set": (val) => ({...val, "flag": false})}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.n": 2}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "2"}});
+				});
+
+				it("Should not apply a parent's forced default over a nested $SET value", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"a": String}, "default": {"a": "d"}, "forceDefault": true}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.a": "x"}});
+					expect(updateItemParams.ExpressionAttributeValues[":v0"]).toEqual({"S": "x"});
+				});
+
+				it("Should still run the validate of the written nested object's own keys", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"child": {"type": Object, "schema": {"n": {"type": Number, "validate": (val) => val > 0}}}}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.child": {"n": -1}}})).rejects.toThrow("parent.child.n with a value of -1 had a validation error when trying to save the item");
+				});
+
+				it("Should convert each element for nested paths into different list elements", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "items": {"type": Array, "schema": [{"type": Object, "schema": {"at": Date}}]}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"items[0].at": new Date(1700000000000), "items[1].at": new Date(1800000000000)}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0[0].#a1 = :v0, #a2[1].#a3 = :v2");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "1700000000000"}, ":v2": {"N": "1800000000000"}});
+				});
+
+				it("Should convert many nested paths of one update, each with its own value", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"a": {"type": String, "set": (val) => `${val}!`}, "b": Number, "deep": {"type": Object, "schema": {"c": Date}}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.a": "x", "meta.b": 2, "meta.deep.c": new Date(1700000000000)}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0, #a2.#a3 = :v2, #a4.#a5.#a6 = :v4");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "x!"}, ":v2": {"N": "2"}, ":v4": {"N": "1700000000000"}});
+				});
+
+				it("Should throw error for a nested path through __proto__ instead of writing an empty map", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "meta": Object}, {"saveUnknown": ["meta.**"]}));
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.__proto__": "x"}})).rejects.toThrow("meta.__proto__ cannot be updated: __proto__ and constructor are not allowed as nested attribute names.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
+				it("Should throw error for a nested path through constructor", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "meta": Object}, {"saveUnknown": ["meta.**"]}));
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.constructor": "x"}})).rejects.toThrow("meta.constructor cannot be updated: __proto__ and constructor are not allowed as nested attribute names.");
+				});
+
+				it("Should throw error before sending when every key of the update is a nested key the schema drops", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": String}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.extra": 1, "meta.other.deep": 2}})).rejects.toThrow("Nothing to update: the schema does not declare meta.extra, meta.other.deep.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
 				it("Should apply a nested set modifier", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": {"type": String, "set": (val) => val.toUpperCase()}}}});

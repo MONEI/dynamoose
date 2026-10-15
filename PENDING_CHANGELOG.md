@@ -9,6 +9,7 @@
 ### General
 
 - Improved performance by caching schema lookups per Schema: `Model.create`/`Item.save`, `Model.get` and `Model.update` are about 1.5 to 2.5 times as fast on large schemas
+- Improved `Model.update` performance for nested paths (`a.b`, `a[0].b`): the nested paths of one update are converted together instead of one full schema pass per path, about 10 to 30 times as fast as 4.2.4
 - A Schema caches its lookups: it assumes that its definitions and dynamoose's internal methods are not changed or wrapped after `new Schema()` (for example an edited nested definition object, a type constructor whose `toString()` changes, lookup methods redefined as getters, or a wrapped `getInternalProperties`)
 
 ### Bug Fixes
@@ -26,3 +27,6 @@
 - Fixed `Model.update` treating a nested path component as the top-level attribute of the same name, for combine sources and forced defaults
 - Fixed `Model.update` throwing "all or none of the combine attributes" when the update writes none of them
 - Fixed `Model.update` writing `NULL` for a nested key the schema drops (not declared and not covered by `saveUnknown`, also inside a schemaless `Object`); the path is skipped, as a full write of the parent drops the key
+- Fixed `Model.update` running a parent attribute's `validate`, `set` and forced default on a nested-path value, where the parent holds only the written key: a valid partial write threw a `ValidationError`, or the parent's `set` added sibling values
+- Fixed `Model.update` writing an empty map for a nested path through `__proto__`; a nested path through `__proto__` or `constructor` now throws `InvalidParameter`
+- Fixed `Model.update` sending an empty update, which DynamoDB rejects, when every key it writes is a nested key the schema drops; it now throws `InvalidParameter` naming those keys

@@ -376,6 +376,7 @@ const edgeCases = [
 		// Unknown keys named like Object.prototype members; some of them fail on 4.2.4.
 		"name": "saveUnknown keys named like Object.prototype members",
 		"failing": ["save meta.constructor", "save everything constructor", "update meta.constructor"],
+		"differs": {"reason": "a nested path through __proto__ or constructor throws InvalidParameter that names the path, not TypeMismatch", "steps": ["update meta.constructor"]},
 		"run": async (ctx) => {
 			const {Schema} = ctx.dynamoose;
 			const Listed = ctx.model("Listed", new Schema({"id": String, "meta": Object}, {"saveUnknown": ["meta.**"]}));
@@ -415,6 +416,7 @@ const edgeCases = [
 	{
 		"name": "nested paths and list indices",
 		"failing": ["update list index", "update nested list index", "update nested type mismatch"],
+		"differs": {"reason": "an update left empty by skipped nested keys throws InvalidParameter before sending, not an empty request DynamoDB rejects", "steps": ["update undescribed nested key"]},
 		"run": async (ctx) => {
 			const Model = ctx.model("Model", new ctx.dynamoose.Schema({
 				"id": String,

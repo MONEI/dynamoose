@@ -607,6 +607,10 @@ export interface ItemObjectFromSchemaSettings {
 	updateTimestamps?: boolean | {updatedAt?: boolean; createdAt?: boolean};
 	typeCheck?: boolean;
 	mapAttributes?: boolean;
+	// Model.update converts nested-path values in a wrapper that holds only the written keys. The
+	// default, set, validate and enum rules then apply only at or below these paths, never to the
+	// ancestors, which would see a partial object.
+	nestedScope?: string[];
 }
 // This function will return an object that conforms to the schema (removing any properties that don't exist, using default values, etc.) & throws an error if there is a type mismatch.
 Item.objectFromSchema = async function (object: any, model: Model<Item>, settings: ItemObjectFromSchemaSettings = {"type": "toDynamo"}): Promise<ObjectType> {
@@ -617,6 +621,10 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	let returnObject = utils.deep_copy(object);
 	const schema: Schema = settings.schema || model.getInternalProperties(internalProperties).schemaForObject(returnObject);
 	const schemaAttributes = schema.attributes(returnObject);
+	const attributesInScope = async (): Promise<string[]> => {
+		const attributes = await Item.attributesWithSchema(returnObject, model);
+		return settings.nestedScope ? attributes.filter((key) => settings.nestedScope.some((path) => key === path || key.startsWith(`${path}.`))) : attributes;
+	};
 
 	function mapAttributes (type: "toDynamo" | "fromDynamo") {
 		if (settings.mapAttributes && settings.type === type) {
@@ -739,7 +747,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 
 	if (settings.defaults || settings.forceDefault) {
-		await Promise.all((await Item.attributesWithSchema(returnObject, model)).map(async (key) => {
+		await Promise.all((await attributesInScope()).map(async (key) => {
 			const value = utils.object.get(returnObject, key);
 			if (value === dynamooseUndefined) {
 				utils.object.set(returnObject, key, undefined);
@@ -821,7 +829,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 	if (settings.modifiers) {
 		await Promise.all(settings.modifiers.map(async (modifier) => {
-			await Promise.all((await Item.attributesWithSchema(returnObject, model)).map(async (key) => {
+			await Promise.all((await attributesInScope()).map(async (key) => {
 				const value = utils.object.get(returnObject, key);
 				const modifierFunction = await schema.getAttributeSettingValue(modifier, key, {"returnFunction": true, typeIndexOptionMap});
 				const modifierFunctionExists: boolean = Array.isArray(modifierFunction) ? modifierFunction.some((val) => Boolean(val)) : Boolean(modifierFunction);
@@ -839,7 +847,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 	// Skip validation when readStrict is false (data from DB is assumed valid)
 	if (settings.validate && !skipValidationForNonStrictRead) {
-		await Promise.all((await Item.attributesWithSchema(returnObject, model)).map(async (key) => {
+		await Promise.all((await attributesInScope()).map(async (key) => {
 			const value = utils.object.get(returnObject, key);
 			const isValueUndefined = typeof value === "undefined" || value === null;
 			if (!isValueUndefined) {
@@ -897,7 +905,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 	// Skip enum validation when readStrict is false (data from DB is assumed valid)
 	if (settings.enum && !skipValidationForNonStrictRead) {
-		await Promise.all((await Item.attributesWithSchema(returnObject, model)).map(async (key) => {
+		await Promise.all((await attributesInScope()).map(async (key) => {
 			const value = utils.object.get(returnObject, key);
 			const isValueUndefined = typeof value === "undefined" || value === null;
 			if (!isValueUndefined) {

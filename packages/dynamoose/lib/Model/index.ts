@@ -822,15 +822,49 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// A nested value goes through the schema the same way a top-level one does: wrap it in the
 		// object its path describes, convert that, and read the value back. Every list index maps to
 		// element 0, since all elements of a list share one schema. Required is checked separately,
-		// on the path itself, because the wrapper lacks the siblings of the value. Returns undefined
-		// when the schema drops the value.
-		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => {
-			const segments = parsePathWithArrayIndices(path);
-			const wrapped = segments.reduceRight((child, segment) => segment.type === "index" ? [child] : {[segment.value]: child}, value as any);
-			const converted = await this.Item.objectFromSchema(wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false} as any);
-			const result = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
-			return result === undefined ? undefined : awsConverter().convertToAttr(result);
+		// on the path itself, because the wrapper lacks the siblings of the value, and the other rules
+		// skip the ancestors for the same reason (`nestedScope`). One conversion of the whole schema
+		// per path is the cost here, so the paths share one wrapper. Two paths that meet at the same
+		// element-0 path, or where one is inside the other, cannot share one; they go in separate
+		// wrappers. Maps each path to its converted value, or to undefined when the schema drops it.
+		const convertNestedValues = async (entries: [string, ValueType][], settings: ObjectType): Promise<Map<string, any>> => {
+			const wrappers: {"wrapped": ObjectType; "paths": string[]; "entries": [string, PathSegment[]][]}[] = [];
+			for (const [path, value] of entries) {
+				const segments = parsePathWithArrayIndices(path);
+				// The object utilities objectFromSchema uses ignore these names, so the value would be lost
+				if (segments.some((segment) => segment.value === "__proto__" || segment.value === "constructor")) {
+					throw new CustomError.InvalidParameter(`${path} cannot be updated: __proto__ and constructor are not allowed as nested attribute names.`);
+				}
+				const genericPath = segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
+				let wrapper = wrappers.find((existing) => !existing.paths.some((other) => other === genericPath || other.startsWith(`${genericPath}.`) || genericPath.startsWith(`${other}.`)));
+				if (!wrapper) {
+					wrapper = {"wrapped": {}, "paths": [], "entries": []};
+					wrappers.push(wrapper);
+				}
+				let parent: any = wrapper.wrapped;
+				segments.forEach((segment, i) => {
+					const key = segment.type === "index" ? 0 : segment.value;
+					if (i === segments.length - 1) {
+						parent[key] = value;
+					} else {
+						parent[key] = parent[key] ?? (segments[i + 1].type === "index" ? [] : {});
+						parent = parent[key];
+					}
+				});
+				wrapper.paths.push(genericPath);
+				wrapper.entries.push([path, segments]);
+			}
+			const result = new Map<string, any>();
+			for (const wrapper of wrappers) {
+				const converted = await this.Item.objectFromSchema(wrapper.wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false, "nestedScope": wrapper.paths} as any);
+				for (const [path, segments] of wrapper.entries) {
+					const value = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
+					result.set(path, value === undefined ? undefined : awsConverter().convertToAttr(value));
+				}
+			}
+			return result;
 		};
+		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => (await convertNestedValues([[path, value]], settings)).get(path);
 		const isSchemaPath = (path: string): boolean => {
 			try {
 				return Boolean(schema.getAttributeValue(path.replace(/\[(\d+)\]/gu, ".$1")));
@@ -922,6 +956,30 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				Object.keys(convertedKeyObj).forEach((key) => delete updateObj[key]);
 			}
 
+			// The nested paths of each update type, converted together. The loop below converts any path
+			// not found here on its own.
+			const nestedValueEntries = new Map<string, [string, ValueType][]>();
+			for (const key of Object.keys(updateObj)) {
+				const isUpdateType = typeof updateObj[key] === "object" && updateTypeNames.includes(key);
+				const value = isUpdateType ? updateObj[key] : {[key]: updateObj[key]};
+				const updateTypeName = isUpdateType ? key : "$SET";
+				if (!value || Array.isArray(value) || updateTypesMap.get(updateTypeName).attributeOnly) {
+					continue;
+				}
+				for (const [subKey, subValue] of Object.entries(value)) {
+					// A path with an empty component is left to the loop, which rejects it
+					const isNestedPath = (subKey.includes("[") || subKey.includes(".")) && !subKey.split(".").some((component) => !component);
+					if (isNestedPath && subValue !== undefined && subValue !== type.UNDEFINED) {
+						nestedValueEntries.set(updateTypeName, [...nestedValueEntries.get(updateTypeName) ?? [], [subKey, subValue as ValueType]]);
+					}
+				}
+			}
+			const convertedNestedValues = new Map<string, Map<string, any>>();
+			for (const [updateTypeName, entries] of nestedValueEntries) {
+				convertedNestedValues.set(updateTypeName, await convertNestedValues(entries, updateTypesMap.get(updateTypeName).objectFromSchemaSettings));
+			}
+			const skippedNestedPaths: string[] = [];
+
 			const returnObject = await Object.keys(updateObj).reduce(async (accumulatorPromise, key) => {
 				const accumulator = await accumulatorPromise;
 				let value = updateObj[key];
@@ -1010,10 +1068,12 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						if (hasArrayIndex || hasDotNotation) {
 							// An undefined value stays undefined, so the path is removed below, as a top-level attribute is
 							if (subValue !== undefined) {
-								subValue = await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
+								const converted = convertedNestedValues.get(updateType.name);
+								subValue = converted?.has(subKey) ? converted.get(subKey) : await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
 								if (subValue === undefined && !isSchemaPath(subKey)) {
 									// The schema drops this key (not declared, not covered by saveUnknown), as a full
 									// write of the parent would: skip the path, never write it as NULL
+									skippedNestedPaths.push(subKey);
 									continue;
 								}
 								if (subValue !== undefined) {
@@ -1329,17 +1389,23 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				delete returnObject.ExpressionAttributeValues;
 			}
 
+			const updateExpression = Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
+				const value = returnObject.UpdateExpression[key];
+
+				if (value.length > 0) {
+					return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
+				} else {
+					return accumulator;
+				}
+			}, "");
+			// DynamoDB rejects an empty update with a message that does not name the dropped keys
+			if (updateExpression === "" && skippedNestedPaths.length > 0) {
+				throw new CustomError.InvalidParameter(`Nothing to update: the schema does not declare ${skippedNestedPaths.join(", ")}.`);
+			}
+
 			return {
 				...returnObject,
-				"UpdateExpression": Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
-					const value = returnObject.UpdateExpression[key];
-
-					if (value.length > 0) {
-						return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
-					} else {
-						return accumulator;
-					}
-				}, "")
+				"UpdateExpression": updateExpression
 			};
 		};
 
