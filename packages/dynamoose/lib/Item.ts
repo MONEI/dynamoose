@@ -556,16 +556,8 @@ Item.prepareForObjectFromSchema = async function<T extends InternalPropertiesCla
 // https://stackoverflow.com/a/59928314/894067
 Item.attributesWithSchema = async function (item: Item, model: Model<Item>): Promise<string[]> {
 	const schema: Schema = model.getInternalProperties(internalProperties).schemaForObject(item);
-	const attributes = schema.attributes();
-	// build a tree out of schema attributes
-	const root = {};
-	attributes.forEach((attribute) => {
-		let node = root;
-		attribute.split(".").forEach((part) => {
-			node[part] = node[part] || {};
-			node = node[part];
-		});
-	});
+	// a tree out of schema attributes
+	const root = schema.getInternalProperties(internalProperties).getSharedAttributeTree();
 	// explore the tree
 	function traverse (node, treeNode, outPath, callback): void {
 		callback(outPath);
@@ -856,7 +848,9 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 			}
 		}
 	}
-	if (settings.required) {
+	// A nested write of a leaf has nothing below it to check, so it skips the walk of the item
+	const hasAttributesInScope = (): boolean => !settings.nestedScope || schema.attributes().some((attribute) => settings.nestedScope.some((path) => attribute.startsWith(`${path}.`)));
+	if (settings.required && hasAttributesInScope()) {
 		let attributesToCheck = await Item.attributesWithSchema(returnObject, model);
 		if (settings.required === "nested") {
 			attributesToCheck = attributesToCheck.filter((attribute) => utils.object.keys(returnObject).find((key) => attribute === key || attribute.startsWith(key + ".")));
