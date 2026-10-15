@@ -50,6 +50,7 @@ Tests added or changed:
 - `test/Item.js` › `item.save` (Promise and Callback):
   - "Should return Date attributes as Date objects after saving": fails on `main` (returns `10000`).
   - "Should return item with get modifiers applied after saving": fails on `main` (returns `"Charlie-set"`).
+  - "Should set a mapped timestamp on the saved item under its mapped name": a timestamp with `map` is set on the instance under its mapped name as a `Date`, and its storage name is removed. Fails on `main`.
   - "Should not apply set modifier twice when saving the same item twice": passes on `main`, guards the instance against a copy-back of `get` values.
   - "Should not modify the item if return request is set": passes on `main`.
   - "Should not modify the item if saving fails": passes on `main`.
