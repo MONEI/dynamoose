@@ -775,7 +775,7 @@ describe("Model", () => {
 							}
 						}
 					}});
-					new dynamoose.Table("User", [User]);
+					new dynamoose.Table("User", [User], {"readStrict": true});
 					const date = new Date();
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"N": date.getTime()}}});
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected birthday to be of type date, instead found type number."));
@@ -783,7 +783,7 @@ describe("Model", () => {
 
 				it("Should throw error if returning ISO Date for String", async () => {
 					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
-					new dynamoose.Table("User", [User]);
+					new dynamoose.Table("User", [User], {"readStrict": true});
 					const date = new Date();
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"S": date.toISOString()}}});
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected birthday to be of type date, instead found type string."));
@@ -791,7 +791,7 @@ describe("Model", () => {
 
 				it("Should throw type mismatch error if passing in wrong type with custom type", () => {
 					User = dynamoose.model("User", {"id": Number, "name": String, "birthday": Date});
-					new dynamoose.Table("User", [User]);
+					new dynamoose.Table("User", [User], {"readStrict": true});
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "birthday": {"S": "Hello World"}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected birthday to be of type date, instead found type string."));
@@ -821,7 +821,7 @@ describe("Model", () => {
 
 				it("Should throw type mismatch error if passing in wrong type with custom type for object", () => {
 					User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
-					new dynamoose.Table("User", [User]);
+					new dynamoose.Table("User", [User], {"readStrict": true});
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"S": "test"}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected address to be of type object, instead found type string."));
@@ -829,7 +829,7 @@ describe("Model", () => {
 
 				it("Should throw type mismatch error if passing in wrong type for nested object attribute", () => {
 					User = dynamoose.model("User", {"id": Number, "address": {"type": Object, "schema": {"street": String, "country": {"type": String, "required": true}}}});
-					new dynamoose.Table("User", [User]);
+					new dynamoose.Table("User", [User], {"readStrict": true});
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "address": {"M": {"country": {"BOOL": true}}}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected address.country to be of type string, instead found type boolean."));
@@ -1215,7 +1215,7 @@ describe("Model", () => {
 
 				it("Should throw error if Dynamo object contains properties that have type mismatch with schema", () => {
 					User = dynamoose.model("User", {"id": Number, "name": String, "age": Number});
-					new dynamoose.Table("User", [User]);
+					new dynamoose.Table("User", [User], {"readStrict": true});
 					getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "name": {"S": "Charlie"}, "age": {"S": "Hello World"}}});
 
 					return expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected age to be of type number, instead found type string."));
@@ -1313,16 +1313,16 @@ describe("Model", () => {
 						expect(Object.keys(nonStrictUser.toJSON())).toEqual(Object.keys(item));
 					});
 
-					it("Should keep type checks on tables that do not set readStrict", async () => {
-						// readStrict false on one table must not leak into the defaults of a later table
-						const NonStrictUser = dynamoose.model("NonStrictUser", {"id": Number, "age": Number});
-						new dynamoose.Table("NonStrictUser", [NonStrictUser], {"readStrict": false});
+					it("Should skip type checks on tables that do not set readStrict", async () => {
+						// The fork's default is readStrict false. readStrict true on one table must not leak into the defaults of a later table
+						const StrictUser = dynamoose.model("StrictUser", {"id": Number, "age": Number});
+						new dynamoose.Table("StrictUser", [StrictUser], {"readStrict": true});
 						User = dynamoose.model("User", {"id": Number, "age": Number});
 						new dynamoose.Table("User", [User]);
 						getItemFunction = () => Promise.resolve({"Item": {"id": {"N": "1"}, "age": {"S": "Hello World"}}});
 
-						expect({...await callType.func(NonStrictUser).bind(NonStrictUser)(1)}).toEqual({"id": 1, "age": "Hello World"});
-						await expect(callType.func(User).bind(User)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected age to be of type number, instead found type string."));
+						await expect(callType.func(StrictUser).bind(StrictUser)(1)).rejects.toEqual(new CustomError.TypeMismatch("Expected age to be of type number, instead found type string."));
+						expect({...await callType.func(User).bind(User)(1)}).toEqual({"id": 1, "age": "Hello World"});
 					});
 				});
 
@@ -3762,6 +3762,13 @@ describe("Model", () => {
 					User = dynamoose.model("User", {"id": Number, "reps": {"type": Array, "schema": [{"type": Object, "schema": {"name": {"type": String, "required": true}}}]}});
 					new dynamoose.Table("User", [User]);
 					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["reps[0]name"]})).rejects.toThrow("Invalid path: reps[0]name. A list index must be followed by a dot, another index or the end of the path.");
+				});
+
+				it("Should throw error for a path that starts with a list index", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "tags": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["[0]"]})).rejects.toThrow("Invalid path: [0]. Path must start with an attribute name.");
 				});
 
 				it("Should check required on a nested path written with a dot before a list index", async () => {

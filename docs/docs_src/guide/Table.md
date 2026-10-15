@@ -60,7 +60,7 @@ dyno_jsdoc_dist/Table/index.js|table.initialize
 
 ## Reading items that do not match the schema
 
-By default (`readStrict: true`), Dynamoose type checks every item it reads from DynamoDB against the schema. If a stored value does not match the type of its attribute, the read throws a `TypeMismatch` error. This can occur after a schema change, or when other code writes to the table.
+With `readStrict: true`, Dynamoose type checks every item it reads from DynamoDB against the schema. In this fork the default is `readStrict: false` (upstream dynamoose defaults to `true`). If a stored value does not match the type of its attribute, the read throws a `TypeMismatch` error. This can occur after a schema change, or when other code writes to the table.
 
 To return these items instead, set `readStrict` to `false` in the table options.
 

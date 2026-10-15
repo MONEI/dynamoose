@@ -17,6 +17,14 @@ module.exports = [
 		]
 	},
 
+	// Upstream keeps eslint-disable comments for its ESLint 8 rules. Keeping them unchanged keeps lib/
+	// identical to upstream, so this config does not report them as unused.
+	{
+		"linterOptions": {
+			"reportUnusedDisableDirectives": "off"
+		}
+	},
+
 	// Base configuration for all files
 	js.configs.recommended,
 
