@@ -894,6 +894,10 @@ export class Schema extends InternalPropertiesClass<SchemaInternalProperties> {
 	 * | `set` | function \| async function | undefined | You can use a set function on the schema to be run whenever saving an item to DynamoDB. It will also be used when retrieving an item (ie. `get`, `query`, `update`, etc). Dynamoose will pass the entire item into this function and you must return the new value of the entire object you want Dynamoose to save to DynamoDB. This function will be run after all property `set` functions are run.
 	 * | `validate` | function \| async function | undefined | You can use a validate function on the schema to ensure the value passes a given validation before saving the item. Dynamoose will pass the entire item into this function and you must return a boolean (`true` if validation passes or `false` if validation fails) or throw an error. This function will be run after all property `validate` functions are run.
 	 *
+	 * :::caution
+	 * Treat the schema definition as immutable once the schema is created. Dynamoose caches attribute lookups per schema, so a change to a nested definition object made after `new Schema()` (for example `definition.address.schema.city = Number`) is not seen by later operations, which keep using the definition as it was when the schema was built. Create a new schema instead of changing a definition in place.
+	 * :::
+	 *
 	 * ```js
 	 * const dynamoose = require("dynamoose");
 	 * const schema = new dynamoose.Schema({
