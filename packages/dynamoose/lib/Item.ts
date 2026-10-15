@@ -608,7 +608,7 @@ export interface ItemObjectFromSchemaSettings {
 	typeCheck?: boolean;
 	mapAttributes?: boolean;
 	// Model.update converts nested-path values in a wrapper that holds only the written keys (these
-	// paths). Defaults apply only at or below them. An ancestor without declared children (a record,
+	// paths). Defaults apply only at or below them, required only below them. An ancestor without declared children (a record,
 	// a schemaless Object) runs its set and validate on the partial object, which holds valid entries
 	// of it. An ancestor with declared children would see its other children missing, so its own set
 	// or validate refuses the write.
@@ -893,6 +893,10 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 		let attributesToCheck = await Item.attributesWithSchema(returnObject, model);
 		if (settings.required === "nested") {
 			attributesToCheck = attributesToCheck.filter((attribute) => utils.object.keys(returnObject).find((key) => attribute === key || attribute.startsWith(key + ".")));
+		}
+		// Model.update checks the written path itself; here only what the written value holds below it
+		if (settings.nestedScope) {
+			attributesToCheck = attributesToCheck.filter((attribute) => settings.nestedScope.some((path) => attribute.startsWith(`${path}.`)));
 		}
 		await Promise.all(attributesToCheck.map(async (key) => {
 			const check = async (): Promise<void> => {

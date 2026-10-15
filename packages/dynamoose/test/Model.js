@@ -3395,6 +3395,22 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toBeUndefined();
 				});
 
+				it("Should throw error for a nested $SET of an object that lacks a required child", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "a": {"type": Object, "schema": {"b": {"type": Object, "schema": {"c": String, "d": {"type": String, "required": true}}}, "x": {"type": String, "required": true}}}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"a.b": {"c": "1"}}})).rejects.toThrow("a.b.d is a required property but has no value when trying to save item");
+				});
+
+				it("Should not require the siblings of a nested $SET object", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "a": {"type": Object, "schema": {"b": {"type": Object, "schema": {"c": String, "d": {"type": String, "required": true}}}, "x": {"type": String, "required": true}}}});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"a.b": {"c": "1", "d": "2"}}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"c": {"S": "1"}, "d": {"S": "2"}}}});
+				});
+
 				it("Should throw error for $SET to undefined of a required nested attribute", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "meta": {"type": Object, "schema": {"name": {"type": String, "required": true}}}});
@@ -3682,14 +3698,13 @@ describe("Model", () => {
 					});
 				});
 
-				it("Should throw error when trying to $REMOVE property from array element", async () => {
+				it("Should send correct params to updateItem with $REMOVE of a property in a list element", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "representatives": {"type": Array, "schema": [{"type": Object, "schema": {"firstName": String, "email": String}}]}});
 					new dynamoose.Table("User", [User]);
-
-					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["representatives[0].email"]})).rejects.toThrow(
-						"DynamoDB does not support removing properties from objects within lists"
-					);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["representatives[0].email"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0[0].#a1");
+					expect(updateItemParams.ExpressionAttributeNames).toEqual({"#a0": "representatives", "#a1": "email"});
 				});
 
 				it("Should throw error for invalid array index - empty brackets", async () => {
@@ -3720,6 +3735,27 @@ describe("Model", () => {
 					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"keywords[-1]": "test"}})).rejects.toThrow(
 						"must be numeric"
 					);
+				});
+
+				it("Should throw error for a path with a name right after a list index", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "reps": {"type": Array, "schema": [{"type": Object, "schema": {"name": {"type": String, "required": true}}}]}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["reps[0]name"]})).rejects.toThrow("Invalid path: reps[0]name. A list index must be followed by a dot, another index or the end of the path.");
+				});
+
+				it("Should throw error for a path that starts with a list index", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "tags": {"type": Array, "schema": [String]}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["[0]"]})).rejects.toThrow("Invalid path: [0]. Path must start with an attribute name.");
+				});
+
+				it("Should check required on a nested path written with a dot before a list index", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "reps": {"type": Array, "schema": [{"type": Object, "schema": {"name": {"type": String, "required": true}}}]}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["reps.[0].name"]})).rejects.toThrow("reps.0.name is a required property but has no value when trying to save item");
 				});
 
 				it("Should throw error for unclosed bracket in path", async () => {

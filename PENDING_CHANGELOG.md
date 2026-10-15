@@ -31,3 +31,6 @@
 - Fixed `Model.update` writing an empty map for a nested path through `__proto__`; a nested path through `__proto__` or `constructor` now throws `InvalidParameter`
 - Fixed `Model.update` succeeding without writing anything requested (or sending an empty update, which DynamoDB rejects) when every key it requests is a nested key the schema drops; it now throws `InvalidParameter` naming those keys, also when timestamps or forced defaults would still be written
 - Fixed `Model.update` removing a nested path under an attribute with several definitions (`[A, B]`) when no definition accepts the value; it now throws `TypeMismatch`
+- Fixed `Model.update` skipping the required check of a nested path written in another spelling (`reps.[0].name`, `reps[0]name`): every check now uses the parsed path, and a path with a name right after a list index or without a leading attribute name throws
+- Fixed `Model.update` skipping `required` on the children of an object written to a nested path (`{"$SET": {"a.b": {"c": "1"}}}` with `a.b.d` required)
+- Fixed `Model.update` refusing `$REMOVE` of a key inside a list element (`reps[0].email`), which DynamoDB accepts

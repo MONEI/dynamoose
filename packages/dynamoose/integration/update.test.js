@@ -62,6 +62,15 @@ describe("Model.update against DynamoDB", () => {
 			expect(await raw()).toEqual({...key, "tags": {"L": [{"S": "a"}, {"S": "c"}]}});
 		});
 
+		it("removes a key inside a list element", async () => {
+			const {Model, raw} = await setup(
+				{"id": Number, "reps": {"type": Array, "schema": [{"type": Object, "schema": {"name": String, "email": String}}]}},
+				{"reps": {"L": [{"M": {"name": {"S": "a"}, "email": {"S": "a@x"}}}]}}
+			);
+			await Model.update({"id": 1}, {"$REMOVE": ["reps[0].email"]});
+			expect(await raw()).toEqual({...key, "reps": {"L": [{"M": {"name": {"S": "a"}}}]}});
+		});
+
 		it("removes a nested path set to undefined", async () => {
 			const {Model, raw} = await setup(
 				{"id": Number, "meta": {"type": Object, "schema": {"name": String, "mcc": String}}},

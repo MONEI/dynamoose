@@ -64,8 +64,10 @@ function parsePathWithArrayIndices(path: string): PathSegment[] {
 
 			i = closeBracket + 1;
 
-			// Skip dot after bracket if present
-			if (i < path.length && path[i] === ".") {
+			if (i < path.length && path[i] !== "." && path[i] !== "[") {
+				throw new Error(`Invalid path: ${path}. A list index must be followed by a dot, another index or the end of the path.`);
+			}
+			if (path[i] === ".") {
 				i++;
 			}
 		} else if (char === ".") {
@@ -103,20 +105,6 @@ function validateArrayIndex(indexStr: string, fullPath: string): void {
 	const index = parseInt(indexStr, 10);
 	if (index < 0) {
 		throw new Error(`Invalid array index in path '${fullPath}': index must be non-negative`);
-	}
-}
-
-/**
- * Validates REMOVE operations for DynamoDB limitations
- */
-function validateRemoveOperation(path: string, updateType: string): void {
-	// DynamoDB limitation: Cannot REMOVE properties from objects within lists
-	if (updateType === "$REMOVE" && /\[\d+\]\.[^.[]+/.test(path)) {
-		throw new Error(
-			"DynamoDB does not support removing properties from objects within lists. " +
-			`Path '${path}' attempts to remove a property from a list element. ` +
-			"To modify an object in a list, use SET to replace the entire object with the property removed."
-		);
 	}
 }
 
@@ -819,11 +807,13 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		let index = 0;
 		// Track which values are already in DynamoDB format to avoid double conversion
 		const alreadyConvertedValues = new Set<string>();
+		// The schema path of a nested update path: list indexes become 0, as in schema.attributes()
+		const schemaPathOf = (segments: PathSegment[]): string => segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
 		// A nested value goes through the schema the same way a top-level one does: wrap it in the
 		// object its path describes, convert that, and read the value back. Every list index maps to
-		// element 0, since all elements of a list share one schema. Required is checked separately,
-		// on the path itself, because the wrapper lacks the siblings of the value, and the other rules
-		// skip the ancestors for the same reason (`nestedScope`). One conversion of the whole schema
+		// element 0, since all elements of a list share one schema. The wrapper lacks the siblings of
+		// the value, so the rules skip them (`nestedScope`): required applies below the path, and the
+		// path itself is checked separately. One conversion of the whole schema
 		// per path is the cost here, so the paths share one wrapper. A path cannot share one when one
 		// path is inside another, when it goes through a list index (elements would merge into
 		// element 0) or an attribute with several definitions (one definition would be picked for
@@ -839,7 +829,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				if (segments.some((segment) => segment.value === "__proto__" || segment.value === "constructor")) {
 					throw new CustomError.InvalidParameter(`${path} cannot be updated: __proto__ and constructor are not allowed as nested attribute names.`);
 				}
-				const genericPath = segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
+				const genericPath = schemaPathOf(segments);
 				const shared = !hasSchemaCallback && !segments.some((segment) => segment.type === "index") && !multiTypeAncestor(segments) && !ancestorHasRule(segments, settings);
 				let wrapper = shared ? wrappers.find((existing) => existing.shared && !existing.paths.some((other) => other === genericPath || other.startsWith(`${genericPath}.`) || genericPath.startsWith(`${other}.`))) : undefined;
 				if (!wrapper) {
@@ -861,7 +851,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			}
 			const result = new Map<string, any>();
 			for (const wrapper of wrappers) {
-				const converted = await this.Item.objectFromSchema(wrapper.wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false, "nestedScope": wrapper.paths} as any);
+				const converted = await this.Item.objectFromSchema(wrapper.wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "nestedScope": wrapper.paths} as any);
 				for (const [path, segments] of wrapper.entries) {
 					const value = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
 					result.set(path, value === undefined ? undefined : awsConverter().convertToAttr(value));
@@ -898,7 +888,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		}
 		const isSchemaPath = (path: string): boolean => {
 			try {
-				return Boolean(schema.getAttributeValue(path.replace(/\[(\d+)\]/gu, ".$1")));
+				return Boolean(schema.getAttributeValue(schemaPathOf(parsePathWithArrayIndices(path))));
 			} catch (e) {
 				return false;
 			}
@@ -1027,7 +1017,6 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					let subValue = value[subKey];
 
 					let updateType = updateTypesMap.get(key);
-					const originalUpdateType = updateType; // Keep track of the original operation type
 
 					const expressionKey = `#a${index}`;
 					// Handle array values correctly
@@ -1052,27 +1041,14 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						}
 					}
 
-					// For array indexed paths, extract the base attribute name for schema validation
+					// A nested path (`address.city`, `tags[0]`, `reps[0].name`) writes inside its first attribute
 					let baseAttributeName = subKey;
-
-					if (subKey && typeof subKey === "string" && subKey.includes("[")) {
-						// Check if we're updating a property within an array element
-						// e.g., "reps[0].firstName" means we're updating firstName, not the whole object
-						const bracketIndex = subKey.indexOf("[");
-						const closeBracketIndex = subKey.indexOf("]");
-						if (closeBracketIndex !== -1 && closeBracketIndex < subKey.length - 1 && subKey[closeBracketIndex + 1] === ".") {
-							// This is a nested property in an array element like "reps[0].firstName"
-							// For nested properties, we don't need the array for validation
-							// We're setting a string/number/etc, not an object
-							baseAttributeName = subKey.substring(0, bracketIndex);
-						} else {
-							// Simple array element like "keywords[0]"
-							baseAttributeName = subKey.substring(0, bracketIndex);
+					if (subKey && typeof subKey === "string" && (subKey.includes("[") || subKey.includes("."))) {
+						const segments = parsePathWithArrayIndices(subKey);
+						if (segments[0]?.type !== "attribute") {
+							throw new Error(`Invalid path: ${subKey}. Path must start with an attribute name.`);
 						}
-					} else if (subKey && typeof subKey === "string" && subKey.includes(".")) {
-						// For dot notation, use the first component
-						// e.g., "business.address.city" -> "business"
-						baseAttributeName = subKey.split(".")[0];
+						baseAttributeName = segments[0].value as string;
 					}
 
 					// Cache expensive schema.getAttributeType() calls
@@ -1141,7 +1117,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					// on the item. A nested path the schema does not describe has nothing to check.
 					let checkAttributeName: string | undefined = baseAttributeName;
 					if (subKey !== baseAttributeName) {
-						checkAttributeName = subKey.replace(/\[(\d+)\]/gu, ".$1");
+						checkAttributeName = schemaPathOf(parsePathWithArrayIndices(subKey));
 						try {
 							schema.getAttributeValue(checkAttributeName);
 						} catch (e) {
@@ -1164,12 +1140,6 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 
 					if (updateType.objectFromSchemaSettings.required === true && checkAttributeName) {
 						await schema.requiredCheck(checkAttributeName, undefined);
-					}
-
-					// Validate REMOVE operations for DynamoDB limitations
-					// Only validate if this was originally a REMOVE operation, not if SET switched to REMOVE
-					if (originalUpdateType.name === "$REMOVE" && subKey && typeof subKey === "string") {
-						validateRemoveOperation(subKey, originalUpdateType.name);
 					}
 
 					let expressionValue = updateType.attributeOnly ? "" : `:v${index}`;
