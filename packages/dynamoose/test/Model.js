@@ -3309,6 +3309,23 @@ describe("Model", () => {
 					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0, #a2.#a3 = :v2");
 				});
 
+				it("Should run a schemaless parent's validate once per nested entry, not on the entries together", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "meta": {"type": Object, "validate": (val) => Object.keys(val).length === 1}}, {"saveUnknown": ["meta.**"]}));
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.a": "1", "meta.b": "2"}});
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "1"}, ":v2": {"S": "2"}});
+				});
+
+				it("Should throw error when every requested key is a nested key the schema drops, even with timestamps", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "meta": {"type": Object, "schema": {"name": String}}}, {"timestamps": true}));
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.extra": 1}})).rejects.toThrow("Nothing to update: the schema does not declare meta.extra.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
 				it("Should write sibling paths that belong to different definitions of a multi-type object", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "data": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": Number}}]});

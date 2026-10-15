@@ -827,7 +827,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// per path is the cost here, so the paths share one wrapper. A path cannot share one when one
 		// path is inside another, when it goes through a list index (elements would merge into
 		// element 0) or an attribute with several definitions (one definition would be picked for
-		// all), or when a schema-level set or validate would see the other paths' values.
+		// all), or when a schema-level or ancestor set or validate would see the other paths' values.
 		// Maps each path to its converted value, or to undefined when the schema drops it.
 		const convertNestedValues = async (entries: [string, ValueType][], settings: ObjectType): Promise<Map<string, any>> => {
 			const schemaSettings = schema.getInternalProperties(internalProperties).settings;
@@ -840,7 +840,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					throw new CustomError.InvalidParameter(`${path} cannot be updated: __proto__ and constructor are not allowed as nested attribute names.`);
 				}
 				const genericPath = segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
-				const shared = !hasSchemaCallback && !segments.some((segment) => segment.type === "index") && !multiTypeAncestor(segments);
+				const shared = !hasSchemaCallback && !segments.some((segment) => segment.type === "index") && !multiTypeAncestor(segments) && !ancestorHasRule(segments, settings);
 				let wrapper = shared ? wrappers.find((existing) => existing.shared && !existing.paths.some((other) => other === genericPath || other.startsWith(`${genericPath}.`) || genericPath.startsWith(`${other}.`))) : undefined;
 				if (!wrapper) {
 					wrapper = {"wrapped": {}, "paths": [], "entries": [], "shared": shared};
@@ -882,6 +882,19 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				} catch (e) {} // eslint-disable-line no-empty
 			}
 			return undefined;
+		}
+		// Whether an ancestor of a nested path has a set or validate rule these settings apply
+		function ancestorHasRule (segments: PathSegment[], settings: ObjectType): boolean {
+			const rules = [...settings.validate ? ["validate"] : [], ...settings.modifiers ?? []];
+			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
+			return parts.slice(0, -1).some((part, i) => rules.some((rule) => {
+				try {
+					const value = schema.getAttributeSettingValue(rule, parts.slice(0, i + 1).join("."), {"returnFunction": true});
+					return Array.isArray(value) ? value.some(Boolean) : Boolean(value);
+				} catch (e) {
+					return false;
+				}
+			}));
 		}
 		const isSchemaPath = (path: string): boolean => {
 			try {
@@ -997,6 +1010,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				convertedNestedValues.set(updateTypeName, await convertNestedValues(entries, updateTypesMap.get(updateTypeName).objectFromSchemaSettings));
 			}
 			const skippedNestedPaths: string[] = [];
+			let requestedWrites = 0;
 
 			const returnObject = await Object.keys(updateObj).reduce(async (accumulatorPromise, key) => {
 				const accumulator = await accumulatorPromise;
@@ -1220,6 +1234,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					const operator = updateType.operator || (updateType.attributeOnly ? "" : " ");
 
 					accumulator.UpdateExpression[updateType.name.slice(1)].push(`${finalExpressionKey}${operator}${expressionValue}`);
+					requestedWrites++;
 
 					index++;
 				}
@@ -1423,8 +1438,8 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					return accumulator;
 				}
 			}, "");
-			// DynamoDB rejects an empty update with a message that does not name the dropped keys
-			if (updateExpression === "" && skippedNestedPaths.length > 0) {
+			// Timestamps and forced defaults alone would let the update succeed without anything it asked for
+			if (requestedWrites === 0 && skippedNestedPaths.length > 0) {
 				throw new CustomError.InvalidParameter(`Nothing to update: the schema does not declare ${skippedNestedPaths.join(", ")}.`);
 			}
 
