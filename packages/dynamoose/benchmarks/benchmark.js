@@ -3,7 +3,7 @@
 // the network. Usage: node --expose-gc benchmarks/benchmark.js [--quick] [--json <file>]
 // Profile one operation or stage: node --expose-gc benchmarks/benchmark.js --profile <name> <schema>
 // [--build current|baseline] [--out <file>] [--quick]
-// EXTRA_SCHEMA=<module> adds one more schema, in the shape of fixtures/checkout-schema.js.
+// EXTRA_SCHEMA=<module> adds one more schema, in the shape of fixtures/order-schema.js.
 // BASELINE=<package directory> replaces dynamoose-baseline with the build in that directory.
 // CI gate: BASELINE=<base build> node --expose-gc benchmarks/benchmark.js --gate [--artifacts <directory>]
 // [--quick] [--rounds <n>]. --quick: 2 rounds of 20 ms, never significant.
@@ -443,7 +443,7 @@ async function main (args) {
 		const settings = quick ? quickSettings : {"rounds": 20, "roundMs": 150, "warmupMs": 300};
 		if (args.includes("--rounds")) {
 			const rounds = option("--rounds");
-			if (!/^[1-9]\d*$/u.test(rounds ?? "")) {
+			if (!/^[1-9]\d*$/u.test(rounds === undefined ? "" : rounds)) {
 				throw new Error(`--rounds must be a positive integer, got "${rounds}"`);
 			}
 			settings.rounds = Number(rounds);

@@ -7,7 +7,7 @@ const median = (values) => {
 // The CI gate fails a pull request only on a slowdown of a gated operation that is large, significant
 // and still there in a second run. All other operations and the stages are report only.
 const gate = {
-	"schemas": ["large", "checkout"],
+	"schemas": ["large", "order"],
 	"operations": ["create", "get", "update"],
 	"maxSlowdownPercent": 15,
 	"alpha": 0.01

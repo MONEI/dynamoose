@@ -1,2 +1,2 @@
 /* istanbul ignore file */
-export default (): void => {};
+export default (): void => {}; // eslint-disable-line @typescript-eslint/no-empty-function

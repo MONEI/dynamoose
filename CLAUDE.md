@@ -173,9 +173,17 @@ The Schema system supports:
   are not changed or wrapped after `new Schema()` (an edited nested definition, a type constructor whose
   `toString()` changes, lookup methods redefined as getters, a wrapped `getInternalProperties`).
   The full rules are in `docs/plans/completed/20261014-schema-lookup-cache.md` (Task 11) and `test/SchemaCache.js`.
-- Known bug, not fixed: `Model.update`'s `attributeTypeCache` makes the request for an undeclared
-  `saveUnknown` attribute depend on the first update on the model. `test/AttributeTypeCache.js` pins it
-  with `it.failing`; plan `docs/plans/completed/20261014-schema-lookup-cache.md`, Task 8.
+- Read path: with the fork's default `readStrict: false`, reads run the normal type check and keep a
+  mismatched value as stored (upstream's `readStrict` code). Its speed comes from shared hot paths, not
+  from skipping the check: `utils.object.entries`/`keys` (`lib/utils/object_entries.ts`) track ancestors,
+  `standardizeKey` skips the regex for keys without a list index, and `Item.attributesWithSchema` reads the
+  cached attribute tree (`getSharedAttributeTree`). Do not add a fork-only fast path or `Model.update`
+  caches back: the old ones lost data (`ANY` lists) and typed `saveUnknown` values by the first update
+  (`test/SaveUnknownUpdateTypes.js`).
+- Upstream sync: `docs/plans/upstream-prs.md` lists the `upstream-pr/*` branches. lib/ should match
+  upstream plus those branches; the fork-only lib lines are the `readStrict` default (`Table/defaults.ts`
+  and its JSDoc). `eslint.config.js` does not report upstream's unused `eslint-disable` comments, so they
+  stay unchanged.
 
 **Monorepo Management:**
 - Lerna handles package dependencies and publishing

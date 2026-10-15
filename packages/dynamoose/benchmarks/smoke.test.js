@@ -42,16 +42,16 @@ describe("benchmark --quick", () => {
 			"extra-large get",
 			"extra-large update",
 			"extra-large update-nested",
-			"checkout create",
-			"checkout create-request",
-			"checkout get",
-			"checkout update",
-			"checkout update-nested"
+			"order create",
+			"order create-request",
+			"order get",
+			"order update",
+			"order update-nested"
 		]);
 	});
 
 	it("Should report every stage of every schema", () => {
-		const schemas = ["small", "medium", "large", "extra-large", "checkout"];
+		const schemas = ["small", "medium", "large", "extra-large", "order"];
 		expect(output.stages.map((result) => `${result.schema} ${result.operation}`)).toEqual(schemas.flatMap((schema) => stages.map((stage) => `${schema} ${stage}`)));
 	});
 
@@ -98,12 +98,12 @@ describe("benchmark --gate", () => {
 	const gate = (args, env) => execFileSync(process.execPath, ["--expose-gc", benchmark, "--gate", ...args], {"encoding": "utf8", "stdio": "pipe", "env": {...process.env, "BASELINE": publishedBaselineDirectory, ...env}});
 
 	// Two quick rounds can never reach significance, so it must pass.
-	it("Should gate create, get and update on large and checkout, the rest report only", () => {
+	it("Should gate create, get and update on large and order, the rest report only", () => {
 		const stdout = gate(["--quick"]);
 		const table = (title) => stdout.split(`${title}\n`)[1].split("\n\n")[0].trimEnd().split("\n").slice(1).map((line) => line.split(/ +/u).slice(0, 2).join(" "));
-		expect(table("confirmed by a second run")).toEqual(["large create", "large get", "large update", "checkout create", "checkout get", "checkout update"]);
-		expect(table("operations (report only)")).toEqual(["large create-request", "large update-nested", "checkout create-request", "checkout update-nested"]);
-		expect(table("stages (report only)")).toEqual(["large", "checkout"].flatMap((schema) => stages.map((stage) => `${schema} ${stage}`)));
+		expect(table("confirmed by a second run")).toEqual(["large create", "large get", "large update", "order create", "order get", "order update"]);
+		expect(table("operations (report only)")).toEqual(["large create-request", "large update-nested", "order create-request", "order update-nested"]);
+		expect(table("stages (report only)")).toEqual(["large", "order"].flatMap((schema) => stages.map((stage) => `${schema} ${stage}`)));
 		expect(stdout).not.toMatch(/SLOWER/u);
 	});
 
@@ -142,14 +142,14 @@ describe("benchmark --gate", () => {
 	});
 });
 
-// The live run of common's schema goes through EXTRA_SCHEMA; a module it cannot load must not pass
+// A schema from outside the repository runs through EXTRA_SCHEMA; a module it cannot load must not pass
 // unnoticed as a run without that schema.
 describe("benchmark EXTRA_SCHEMA", () => {
 	it("Should run an operation on the extra schema", () => {
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), "dynamoose-extra-"));
 		try {
 			const moduleFile = path.join(directory, "extra.js");
-			fs.writeFileSync(moduleFile, `module.exports = {...require(${JSON.stringify(path.join(__dirname, "fixtures", "checkout-schema.js"))}), "name": "extra"};`);
+			fs.writeFileSync(moduleFile, `module.exports = {...require(${JSON.stringify(path.join(__dirname, "fixtures", "order-schema.js"))}), "name": "extra"};`);
 			const stdout = execFileSync(process.execPath, ["--expose-gc", benchmark, "--profile", "create-request", "extra", "--quick", "--out", path.join(directory, "extra.cpuprofile")], {"encoding": "utf8", "env": {...process.env, "EXTRA_SCHEMA": moduleFile}});
 			expect(stdout).toMatch(/^create-request on extra, current build /);
 		} finally {

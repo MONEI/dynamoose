@@ -2,6 +2,7 @@ const globals = require("globals");
 const tsParser = require("@typescript-eslint/parser");
 const typescriptEslint = require("@typescript-eslint/eslint-plugin");
 const js = require("@eslint/js");
+const noOnlyTests = require("eslint-plugin-no-only-tests");
 
 module.exports = [
 	// Global ignores
@@ -15,6 +16,14 @@ module.exports = [
 			"publish/node_modules",
 			"**/.*.js"
 		]
+	},
+
+	// Upstream keeps eslint-disable comments for its ESLint 8 rules. Keeping them unchanged keeps lib/
+	// identical to upstream, so this config does not report them as unused.
+	{
+		"linterOptions": {
+			"reportUnusedDisableDirectives": "off"
+		}
 	},
 
 	// Base configuration for all files
@@ -106,6 +115,9 @@ module.exports = [
 	// Test files (Jest globals)
 	{
 		"files": ["**/test/**/*.js", "**/*.test.js", "**/*.spec.js"],
+		"plugins": {
+			"no-only-tests": noOnlyTests
+		},
 		"languageOptions": {
 			"globals": {
 				...globals.jest,
@@ -122,7 +134,8 @@ module.exports = [
 		},
 		"rules": {
 			"no-console": "off",
-			"no-unused-vars": "off"
+			"no-unused-vars": "off",
+			"no-only-tests/no-only-tests": "error"
 		}
 	},
 

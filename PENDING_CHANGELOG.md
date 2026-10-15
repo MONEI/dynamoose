@@ -8,12 +8,17 @@
 
 ### General
 
+- Faster reads and writes: `utils.object.entries` and `keys` track ancestors instead of walking each nested object's whole subtree for cycles, schema lookups skip the list-index regex for keys without an index, and `Item.attributesWithSchema` reuses a cached tree of the schema's attributes. `get` and `update` are about 5-35% faster than 4.2.6 on the benchmark schemas, also without the removed `Model.update` caches
+- Removed the `Model.update` caches (`attributeTypeCache`, `schemaAttributesCache`, `updateTypesMapCache`, `convertKeyToObjectCache`), `utils/LRUCache` and `Model.clearCache()`. The schema lookup cache covers them, and `attributeTypeCache` made the request for an undeclared `saveUnknown` attribute depend on the first update of the model
 - Improved performance by caching schema lookups per Schema: `Model.create`/`Item.save`, `Model.get` and `Model.update` are about 1.5 to 2.5 times as fast on large schemas
 - Improved `Model.update` performance for nested paths (`a.b`, `a[0].b`): the nested paths of one update are converted together instead of one full schema pass per path, about 10 to 30 times as fast as 4.2.4
 - A Schema caches its lookups: it assumes that its definitions and dynamoose's internal methods are not changed or wrapped after `new Schema()` (for example an edited nested definition object, a type constructor whose `toString()` changes, lookup methods redefined as getters, or a wrapped `getInternalProperties`)
 
 ### Bug Fixes
 
+- Fixed `readStrict: false` reads returning `ANY` lists as empty, dropping the fields of range-key model references and throwing on a multi-type attribute with a `get` modifier. Reads now run the type check and return a mismatched value as stored (same code as upstream's `readStrict`); the fork's default stays `false`
+- Fixed `save`/`Model.create` writing `get`-modified values back onto the item (a second save applied `set` twice) and marking the item stored before `putItem`, also for `{"return": "request"}` and when `putItem` fails. `save` now resolves with a new item in the form `Model.get` returns, and the saved item keeps its values
+- Fixed the primitive fast path of `convertToAttr` differing from the AWS SDK: `NaN`, `Infinity`, numbers outside the safe integer range and `undefined` now go to the SDK (which throws), and converter options are respected
 - Fixed `Model.update` being impossible to run against a schema whose hash or range key is a `Combine` attribute
 - Fixed `deep_copy` dropping sibling properties that share the same object reference (e.g. a single `Date` used for both `createdAt` and `updatedAt`, or a single address used for both `billingAddress` and `shippingAddress`). Circular reference detection now tracks only the current ancestor path rather than every object ever visited, which also removes an infinite-recursion risk on self-referencing arrays and a shared-reference leak on class instances containing circular properties
 - Fixed `dynamoose.transaction` get results skipping schema `get` modifiers. Items returned from a `transactGetItems` transaction now run attribute `get` functions the same as `Model.get`, `Model.batchGet`, `Model.query`, and `Model.scan`

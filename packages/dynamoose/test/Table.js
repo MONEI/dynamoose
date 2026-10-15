@@ -537,6 +537,32 @@ describe("Table", () => {
 						});
 					});
 
+					it("Should call createTable without a stream specification when streamOptions is undefined", async () => {
+						const tableName = "Cat";
+						const model = dynamoose.model(tableName, {"id": String});
+						new instance.Table(tableName, [model], {"streamOptions": undefined});
+						await utils.set_immediate_promise();
+						expect(createTableParams).toEqual({
+							"AttributeDefinitions": [
+								{
+									"AttributeName": "id",
+									"AttributeType": "S"
+								}
+							],
+							"KeySchema": [
+								{
+									"AttributeName": "id",
+									"KeyType": "HASH"
+								}
+							],
+							"ProvisionedThroughput": {
+								"ReadCapacityUnits": 1,
+								"WriteCapacityUnits": 1
+							},
+							"TableName": tableName
+						});
+					});
+
 					it("Shouldn't call createTable if table already exists", async () => {
 						instance.aws.ddb.set({
 							"createTable": (params) => {
@@ -1576,13 +1602,13 @@ describe("Table", () => {
 							let originalConsole = {};
 							beforeEach(async () => {
 								consoleTypes.forEach((type) => {
-									originalConsole[type] = console[type];
-									console[type] = (str) => logs.push({"message": str, type});
+									originalConsole[type] = console[type]; // eslint-disable-line no-console
+									console[type] = (str) => logs.push({"message": str, type}); // eslint-disable-line no-console
 								});
 							});
 							afterEach(() => {
 								consoleTypes.forEach((type) => {
-									console[type] = originalConsole[type];
+									console[type] = originalConsole[type]; // eslint-disable-line no-console
 								});
 								originalConsole = {};
 								logs = [];
