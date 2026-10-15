@@ -607,9 +607,11 @@ export interface ItemObjectFromSchemaSettings {
 	updateTimestamps?: boolean | {updatedAt?: boolean; createdAt?: boolean};
 	typeCheck?: boolean;
 	mapAttributes?: boolean;
-	// Model.update converts nested-path values in a wrapper that holds only the written keys. The
-	// default, set, validate and enum rules then apply only at or below these paths, never to the
-	// ancestors, which would see a partial object.
+	// Model.update converts nested-path values in a wrapper that holds only the written keys (these
+	// paths). Defaults apply only at or below them. An ancestor without declared children (a record,
+	// a schemaless Object) runs its set and validate on the partial object, which holds valid entries
+	// of it. An ancestor with declared children would see its other children missing, so its own set
+	// or validate refuses the write.
 	nestedScope?: string[];
 }
 // This function will return an object that conforms to the schema (removing any properties that don't exist, using default values, etc.) & throws an error if there is a type mismatch.
@@ -621,9 +623,15 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	let returnObject = utils.deep_copy(object);
 	const schema: Schema = settings.schema || model.getInternalProperties(internalProperties).schemaForObject(returnObject);
 	const schemaAttributes = schema.attributes(returnObject);
-	const attributesInScope = async (): Promise<string[]> => {
+	const attributesInScope = async (includeAncestors: boolean): Promise<string[]> => {
 		const attributes = await Item.attributesWithSchema(returnObject, model);
-		return settings.nestedScope ? attributes.filter((key) => settings.nestedScope.some((path) => key === path || key.startsWith(`${path}.`))) : attributes;
+		return settings.nestedScope ? attributes.filter((key) => settings.nestedScope.some((path) => key === path || key.startsWith(`${path}.`) || includeAncestors && path.startsWith(`${key}.`))) : attributes;
+	};
+	const refuseRuleOnPartialObject = (key: string): void => {
+		const path = settings.nestedScope?.find((path) => path.startsWith(`${key}.`));
+		if (path && schema.attributes().some((attribute) => attribute.startsWith(`${key}.`))) {
+			throw new CustomError.InvalidParameter(`${path} cannot be updated alone: ${key} has its own set or validate rule, so write the whole ${key}.`);
+		}
 	};
 
 	function mapAttributes (type: "toDynamo" | "fromDynamo") {
@@ -747,7 +755,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 
 	if (settings.defaults || settings.forceDefault) {
-		await Promise.all((await attributesInScope()).map(async (key) => {
+		await Promise.all((await attributesInScope(false)).map(async (key) => {
 			const value = utils.object.get(returnObject, key);
 			if (value === dynamooseUndefined) {
 				utils.object.set(returnObject, key, undefined);
@@ -829,12 +837,13 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 	if (settings.modifiers) {
 		await Promise.all(settings.modifiers.map(async (modifier) => {
-			await Promise.all((await attributesInScope()).map(async (key) => {
+			await Promise.all((await attributesInScope(true)).map(async (key) => {
 				const value = utils.object.get(returnObject, key);
 				const modifierFunction = await schema.getAttributeSettingValue(modifier, key, {"returnFunction": true, typeIndexOptionMap});
 				const modifierFunctionExists: boolean = Array.isArray(modifierFunction) ? modifierFunction.some((val) => Boolean(val)) : Boolean(modifierFunction);
 				const isValueUndefined = typeof value === "undefined" || value === null;
 				if (modifierFunctionExists && !isValueUndefined) {
+					refuseRuleOnPartialObject(key);
 					const oldValue = object.original ? utils.object.get(object.original(), key) : undefined;
 					utils.object.set(returnObject, key, await modifierFunction(value, oldValue));
 				}
@@ -847,12 +856,13 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 	// Skip validation when readStrict is false (data from DB is assumed valid)
 	if (settings.validate && !skipValidationForNonStrictRead) {
-		await Promise.all((await attributesInScope()).map(async (key) => {
+		await Promise.all((await attributesInScope(true)).map(async (key) => {
 			const value = utils.object.get(returnObject, key);
 			const isValueUndefined = typeof value === "undefined" || value === null;
 			if (!isValueUndefined) {
 				const validator = await schema.getAttributeSettingValue("validate", key, {"returnFunction": true, typeIndexOptionMap});
 				if (validator) {
+					refuseRuleOnPartialObject(key);
 					let result;
 					if (validator instanceof RegExp) {
 						if (typeof value === "string") {
@@ -905,7 +915,7 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 	}
 	// Skip enum validation when readStrict is false (data from DB is assumed valid)
 	if (settings.enum && !skipValidationForNonStrictRead) {
-		await Promise.all((await attributesInScope()).map(async (key) => {
+		await Promise.all((await Item.attributesWithSchema(returnObject, model)).map(async (key) => {
 			const value = utils.object.get(returnObject, key);
 			const isValueUndefined = typeof value === "undefined" || value === null;
 			if (!isValueUndefined) {

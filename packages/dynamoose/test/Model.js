@@ -3245,22 +3245,27 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"M": {"n": {"N": "1"}}}});
 				});
 
-				it("Should not run a parent's validate on a nested $SET, since the parent holds only the written key", async () => {
+				it("Should throw error for a nested $SET under a parent with declared children and its own validate", async () => {
 					updateItemFunction = () => Promise.resolve({});
-					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"required1": {"type": String, "required": true}, "other": String}, "validate": (val) => typeof val.required1 === "string"}});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"required1": {"type": String, "required": true}, "admin": Boolean}, "validate": (val) => typeof val.required1 === "string" && val.admin !== true}});
 					new dynamoose.Table("User", [User]);
-					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.other": "o2"}});
-					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
-					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "o2"}});
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.admin": true}})).rejects.toThrow("parent.admin cannot be updated alone: parent has its own set or validate rule, so write the whole parent.");
+					expect(updateItemParams).toBeUndefined();
 				});
 
-				it("Should not run a parent's set modifier on a nested $SET", async () => {
+				it("Should throw error for a nested $SET under a parent with declared children and its own set modifier", async () => {
 					updateItemFunction = () => Promise.resolve({});
-					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"n": Number, "flag": {"type": Boolean, "validate": (val) => val === true}}, "set": (val) => ({...val, "flag": false})}});
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"n": Number, "flag": Boolean}, "set": (val) => ({...val, "flag": false})}});
 					new dynamoose.Table("User", [User]);
-					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.n": 2}});
-					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0");
-					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"N": "2"}});
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.n": 2}})).rejects.toThrow("parent.n cannot be updated alone: parent has its own set or validate rule, so write the whole parent.");
+				});
+
+				it("Should run a record's validate on a nested $SET entry", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "meta": {"type": Object, "validate": (val) => Object.values(val).every((entry) => typeof entry === "string")}}, {"saveUnknown": ["meta.**"]}));
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.foo": 123}})).rejects.toThrow("meta with a value of [object Object] had a validation error when trying to save the item");
 				});
 
 				it("Should not apply a parent's forced default over a nested $SET value", async () => {

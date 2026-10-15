@@ -27,6 +27,6 @@
 - Fixed `Model.update` treating a nested path component as the top-level attribute of the same name, for combine sources and forced defaults
 - Fixed `Model.update` throwing "all or none of the combine attributes" when the update writes none of them
 - Fixed `Model.update` writing `NULL` for a nested key the schema drops (not declared and not covered by `saveUnknown`, also inside a schemaless `Object`); the path is skipped, as a full write of the parent drops the key
-- Fixed `Model.update` running a parent attribute's `validate`, `set` and forced default on a nested-path value, where the parent holds only the written key: a valid partial write threw a `ValidationError`, or the parent's `set` added sibling values
+- Fixed `Model.update` applying a parent attribute's forced default over a nested-path value. A nested path under a parent with declared children and its own `validate` or `set` now throws `InvalidParameter` (write the whole parent): that rule would see only the written key. A parent without declared children (a record, a schemaless `Object`) still runs its `validate` and `set` on the written entries
 - Fixed `Model.update` writing an empty map for a nested path through `__proto__`; a nested path through `__proto__` or `constructor` now throws `InvalidParameter`
 - Fixed `Model.update` sending an empty update, which DynamoDB rejects, when every key it writes is a nested key the schema drops; it now throws `InvalidParameter` naming those keys
