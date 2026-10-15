@@ -3309,6 +3309,24 @@ describe("Model", () => {
 					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0, #a2.#a3 = :v2");
 				});
 
+				it("Should write sibling paths that belong to different definitions of a multi-type object", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": Number}}]});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"data.a": "x", "data.b": 2}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0, #a2.#a3 = :v2");
+					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "x"}, ":v2": {"N": "2"}});
+				});
+
+				it("Should throw error for a nested value no definition of a multi-type object accepts, instead of removing the path", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", {"id": Number, "data": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": Number}}]});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"data.b": "abc"}})).rejects.toThrow("data.b with a value of \"abc\" matches no definition of data.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
 				it("Should throw error for a nested path through __proto__ instead of writing an empty map", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					updateItemParams = undefined;

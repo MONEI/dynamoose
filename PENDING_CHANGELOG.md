@@ -30,3 +30,4 @@
 - Fixed `Model.update` applying a parent attribute's forced default over a nested-path value. A nested path under a parent with declared children and its own `validate` or `set` now throws `InvalidParameter` (write the whole parent): that rule would see only the written key. A parent without declared children (a record, a schemaless `Object`) still runs its `validate` and `set` on the written entries
 - Fixed `Model.update` writing an empty map for a nested path through `__proto__`; a nested path through `__proto__` or `constructor` now throws `InvalidParameter`
 - Fixed `Model.update` sending an empty update, which DynamoDB rejects, when every key it writes is a nested key the schema drops; it now throws `InvalidParameter` naming those keys
+- Fixed `Model.update` removing a nested path under an attribute with several definitions (`[A, B]`) when no definition accepts the value; it now throws `TypeMismatch`
