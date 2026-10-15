@@ -824,11 +824,14 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// element 0, since all elements of a list share one schema. Required is checked separately,
 		// on the path itself, because the wrapper lacks the siblings of the value, and the other rules
 		// skip the ancestors for the same reason (`nestedScope`). One conversion of the whole schema
-		// per path is the cost here, so the paths share one wrapper. Two paths that meet at the same
-		// element-0 path, or where one is inside the other, cannot share one; they go in separate
-		// wrappers. Maps each path to its converted value, or to undefined when the schema drops it.
+		// per path is the cost here, so the paths share one wrapper. A path cannot share one when one
+		// path is inside another, when it goes through a list index (elements would merge into
+		// element 0), or when a schema-level set or validate would see the other paths' values.
+		// Maps each path to its converted value, or to undefined when the schema drops it.
 		const convertNestedValues = async (entries: [string, ValueType][], settings: ObjectType): Promise<Map<string, any>> => {
-			const wrappers: {"wrapped": ObjectType; "paths": string[]; "entries": [string, PathSegment[]][]}[] = [];
+			const schemaSettings = schema.getInternalProperties(internalProperties).settings;
+			const hasSchemaCallback = (settings.modifiers ?? []).some((modifier) => schemaSettings[modifier]) || settings.validate && schemaSettings.validate;
+			const wrappers: {"wrapped": ObjectType; "paths": string[]; "entries": [string, PathSegment[]][]; "shared": boolean}[] = [];
 			for (const [path, value] of entries) {
 				const segments = parsePathWithArrayIndices(path);
 				// The object utilities objectFromSchema uses ignore these names, so the value would be lost
@@ -836,9 +839,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					throw new CustomError.InvalidParameter(`${path} cannot be updated: __proto__ and constructor are not allowed as nested attribute names.`);
 				}
 				const genericPath = segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
-				let wrapper = wrappers.find((existing) => !existing.paths.some((other) => other === genericPath || other.startsWith(`${genericPath}.`) || genericPath.startsWith(`${other}.`)));
+				const shared = !hasSchemaCallback && !segments.some((segment) => segment.type === "index");
+				let wrapper = shared ? wrappers.find((existing) => existing.shared && !existing.paths.some((other) => other === genericPath || other.startsWith(`${genericPath}.`) || genericPath.startsWith(`${other}.`))) : undefined;
 				if (!wrapper) {
-					wrapper = {"wrapped": {}, "paths": [], "entries": []};
+					wrapper = {"wrapped": {}, "paths": [], "entries": [], "shared": shared};
 					wrappers.push(wrapper);
 				}
 				let parent: any = wrapper.wrapped;

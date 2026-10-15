@@ -3301,6 +3301,14 @@ describe("Model", () => {
 					expect(updateItemParams.ExpressionAttributeValues).toEqual({":v0": {"S": "x!"}, ":v2": {"N": "2"}, ":v4": {"N": "1700000000000"}});
 				});
 
+				it("Should run a schema-level validate once per nested path, not on the paths together", async () => {
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number, "meta": {"type": Object, "schema": {"x": String, "y": String}}}, {"validate": (obj) => !(obj.meta && obj.meta.x && obj.meta.y)}));
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$SET": {"meta.x": "1", "meta.y": "2"}});
+					expect(updateItemParams.UpdateExpression).toEqual("SET #a0.#a1 = :v0, #a2.#a3 = :v2");
+				});
+
 				it("Should throw error for a nested path through __proto__ instead of writing an empty map", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					updateItemParams = undefined;
