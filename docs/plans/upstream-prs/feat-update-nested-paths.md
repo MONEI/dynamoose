@@ -33,7 +33,7 @@ Depends on the four `Model.update` fixes (`upstream-pr/fix-update-value-types`, 
 
 A known trade-off for review: a record (an `Object` without declared children) runs its `validate` on the partial object holding only the written entry. A rule that compares entries with each other can be bypassed by nested writes; rules that check each entry work as before. The alternative is to refuse nested writes under any parent with a rule; we chose the less restrictive one, but are happy to switch.
 
-74 new tests in `test/Model.js` (70 fail without the library change; each runs for Promise and callback); the DynamoDB Local suite in `upstream-pr/test-update-integration` checks what DynamoDB stores for these cases.
+75 new tests in `test/Model.js` (71 fail without the library change; each runs for Promise and callback); the DynamoDB Local suite in `upstream-pr/test-update-integration` checks what DynamoDB stores for these cases.
 
 
 ### Type (select 1):
