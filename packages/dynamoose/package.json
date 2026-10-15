@@ -38,7 +38,7 @@
     "js-object-utilities": "^2.2.1"
   },
   "devDependencies": {
-    "dynamoose-baseline": "npm:@monei-js/dynamoose@4.2.4",
+    "dynamoose-baseline": "npm:@monei-js/dynamoose@4.2.5",
     "dynamoose-logger": "^4.2.0"
   },
   "license": "Unlicense",
