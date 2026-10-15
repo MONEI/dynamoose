@@ -2,6 +2,7 @@ const globals = require("globals");
 const tsParser = require("@typescript-eslint/parser");
 const typescriptEslint = require("@typescript-eslint/eslint-plugin");
 const js = require("@eslint/js");
+const noOnlyTests = require("eslint-plugin-no-only-tests");
 
 module.exports = [
 	// Global ignores
@@ -114,6 +115,9 @@ module.exports = [
 	// Test files (Jest globals)
 	{
 		"files": ["**/test/**/*.js", "**/*.test.js", "**/*.spec.js"],
+		"plugins": {
+			"no-only-tests": noOnlyTests
+		},
 		"languageOptions": {
 			"globals": {
 				...globals.jest,
@@ -130,7 +134,8 @@ module.exports = [
 		},
 		"rules": {
 			"no-console": "off",
-			"no-unused-vars": "off"
+			"no-unused-vars": "off",
+			"no-only-tests/no-only-tests": "error"
 		}
 	},
 

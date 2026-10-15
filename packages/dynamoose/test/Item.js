@@ -218,6 +218,18 @@ describe("Item", () => {
 					expect(result.birthday.getTime()).toEqual(10000);
 				});
 
+				it("Should set a mapped timestamp on the saved item under its mapped name", async () => {
+					putItemFunction = () => Promise.resolve();
+					User = dynamoose.model("User", new dynamoose.Schema({"id": Number}, {"timestamps": {"createdAt": {"created_at": {"type": {"value": Date, "settings": {"storage": "seconds"}}, "map": "createdAt"}}, "updatedAt": null}}));
+					new dynamoose.Table("User", [User]);
+					user = new User({"id": 1});
+
+					const result = await callType.func(user).bind(user)();
+					expect(result.createdAt).toBeInstanceOf(Date);
+					expect(user.createdAt).toEqual(result.createdAt);
+					expect(user.created_at).toBeUndefined();
+				});
+
 				it("Should return item with get modifiers applied after saving", async () => {
 					putItemFunction = () => Promise.resolve();
 					User = dynamoose.model("User", {"id": Number, "name": {"type": String, "set": (value) => `${value}-set`, "get": (value) => value.replace(/-set$/, "")}});

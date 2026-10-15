@@ -483,11 +483,18 @@ export class Item extends InternalPropertiesClass<ItemInternalProperties> {
 
 			// Saving set the timestamps on this item in their storage form. Replace them with the returned form.
 			// Other attributes keep the value the user gave, so a `set` modifier is not applied again on the next save.
+			// A mapped timestamp (`map`, `defaultMap`) is under its mapped name in the returned form.
 			const schema: Schema = model.getInternalProperties(internalProperties).schemaForObject(returnItem);
-			schema.getInternalProperties(internalProperties).getTimestampAttributes().forEach((timestamp) => {
-				const value = utils.object.get(returnItem as any, timestamp.name);
+			const schemaInternalProperties = schema.getInternalProperties(internalProperties);
+			schemaInternalProperties.getTimestampAttributes().forEach((timestamp) => {
+				const mapValues = schemaInternalProperties.getMapSettingValuesForKey(timestamp.name);
+				const returnedName = mapValues.length > 0 ? schemaInternalProperties.getDefaultMapAttribute(timestamp.name) || mapValues[0] : timestamp.name;
+				const value = utils.object.get(returnItem as any, returnedName);
 				if (value !== undefined) {
-					utils.object.set(this as any, timestamp.name, value);
+					utils.object.set(this as any, returnedName, value);
+					if (returnedName !== timestamp.name) {
+						utils.object.delete(this as any, timestamp.name);
+					}
 				}
 			});
 

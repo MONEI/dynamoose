@@ -3,7 +3,7 @@
 `benchmark.js` measures the CPU cost of dynamoose operations. It loads two builds in one process:
 
 - **current**: this package's `dist` (run `npm run build` first)
-- **baseline**: the published `dynamoose` release named in the `dynamoose-baseline` devDependency (an npm alias)
+- **baseline**: the published release named in the `dynamoose-baseline` devDependency (an npm alias; in this fork `@monei-js/dynamoose`)
 
 Both builds use a stub DynamoDB client with canned responses, so no request leaves the process and
 the numbers contain no network time.
