@@ -40,12 +40,16 @@ docker run -d --rm -p 8000:8000 amazon/dynamodb-local -jar DynamoDBLocal.jar -in
 cd packages/dynamoose && npm run build && npm run test:integration   # DYNAMODB_ENDPOINT overrides the URL
 ```
 
-**Benchmarking (in packages/dynamoose):**
+**Benchmarking (in packages/dynamoose, after `npm run build`):**
 ```bash
-npm run benchmark               # Run all benchmarks
-npm run benchmark:conversions   # Schema conversions benchmark
-npm run benchmark:models        # Model operations benchmark
+npm run benchmark                              # Current dist vs dynamoose-baseline, full run (5 minutes or more)
+npm run benchmark -- --quick                   # Short rounds, noisy numbers
+npm run benchmark -- --profile update large    # CPU profile of one operation or stage
+npm run benchmark:smoke                        # jest: the modes still run, the gate verdict and failure path
+EXTRA_SCHEMA=path/to/module.js npm run benchmark   # Add one schema (a module common's live schema needs node --import tsx, see the README)
 ```
+
+See "Performance work" below and `packages/dynamoose/benchmarks/README.md` for details.
 
 **Linting:**
 ```bash
@@ -145,6 +149,33 @@ The Schema system supports:
 - Main documentation lives in `docs/docs_src/`
 - Update `PENDING_CHANGELOG.md` when making changes
 - Some docs use replaceable JSDoc patterns like `dyno_jsdoc_dist/Model/index.js|model.table`
+
+**Performance work:**
+
+- Benchmark: `benchmarks/benchmark.js` loads the current `dist` and `dynamoose-baseline` in one process and
+  interleaves rounds. A stub DynamoDB client gives canned responses, so the numbers have no network time.
+  It measures operations (create, create-request, get, update, nested update) and report-only internal
+  stages. Run the numbers under plain `node`, not `tsx`: tsx hooks every `require`, and `Item.ts` calls
+  `require("./Schema")` inline per value. Details, the CI gate (`--gate`, job `benchmark-gate`) and its
+  limits are in `packages/dynamoose/benchmarks/README.md`.
+- Equivalence suite: `test/Equivalence.js` (cases in `equivalence/corpus.js`, harness in
+  `equivalence/compare.js`) runs every case on the current build and on `dynamoose-baseline` (an npm alias
+  of the published `@monei-js/dynamoose`) and compares requests, results, errors, mutations and user
+  function calls. A failure is a bug in the change. Never edit a case or the baseline to make it pass. A
+  deliberate behaviour change lists the steps it changes in the case's `differs` with a `reason`; the
+  suite then checks that they differ. Bump the alias to the new version after each release and remove the
+  `differs` entries the release contains.
+- Schema lookup cache (`lib/Schema.ts`): a write by `lib/` that can reach a built schema's definition
+  drops the cache of every schema, also when it throws: `clearAllLookupCaches()` on a schema's internal
+  properties (the Schema constructor calls `clearSchemaLookupCaches()` in `finally`). Lookups by `lib/`
+  use the internal `getSharedAttributeTypeDetails` and never change its result.
+  Accepted difference from 4.2.4: the cache assumes schema definitions and dynamoose's internal methods
+  are not changed or wrapped after `new Schema()` (an edited nested definition, a type constructor whose
+  `toString()` changes, lookup methods redefined as getters, a wrapped `getInternalProperties`).
+  The full rules are in `docs/plans/completed/20261014-schema-lookup-cache.md` (Task 11) and `test/SchemaCache.js`.
+- Known bug, not fixed: `Model.update`'s `attributeTypeCache` makes the request for an undeclared
+  `saveUnknown` attribute depend on the first update on the model. `test/AttributeTypeCache.js` pins it
+  with `it.failing`; plan `docs/plans/completed/20261014-schema-lookup-cache.md`, Task 8.
 
 **Monorepo Management:**
 - Lerna handles package dependencies and publishing

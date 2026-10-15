@@ -1,342 +1,192 @@
-# Dynamoose Performance Benchmarks
+# Dynamoose Benchmarks
 
-This directory contains comprehensive performance benchmarks for Dynamoose, a DynamoDB modeling tool for Node.js.
+`benchmark.js` measures the CPU cost of dynamoose operations. It loads two builds in one process:
 
-## Overview
+- **current**: this package's `dist` (run `npm run build` first)
+- **baseline**: the published `@monei-js/dynamoose` named in the `dynamoose-baseline` devDependency
 
-The benchmarks are designed to measure Dynamoose performance across different operations and schema complexities:
+Both builds use a stub DynamoDB client with canned responses, so no request leaves the process and
+the numbers contain no network time.
 
-- **Schema Conversion Benchmarks**: Tests `toDynamo()` and `fromDynamo()` operations
-- **Model Operation Benchmarks**: Tests CRUD operations like `Model.create()`, `Model.update()`, and `Model.get()`
+## Running
 
-## Benchmark Scripts
-
-### DynamoDB Integration Benchmarks
-
-#### Schema Conversion Benchmarks
-- **File**: `schema-conversions-benchmark.js`
-- **Command**: `npm run benchmark:conversions`
-- **Tests**: 
-  - `toDynamo()` - Convert JavaScript objects to DynamoDB format
-  - `fromDynamo()` - Convert DynamoDB data to JavaScript objects  
-  - `fromDynamo(strict)` - Convert with strict mode enabled
-
-#### Model Operation Benchmarks  
-- **File**: `model-operations-benchmark.js`
-- **Command**: `npm run benchmark:models`
-- **Tests**:
-  - `Model.update()` - Update existing items in DynamoDB
-  - `Model.get()` - Retrieve items from DynamoDB
-
-### Run Individual Benchmarks
 ```bash
-# DynamoDB integration (requires local DynamoDB)
-npm run benchmark:conversions
-npm run benchmark:models
+# In packages/dynamoose
+npm run build
+npm run benchmark                                  # full run (5 minutes or more)
+npm run benchmark -- --quick                       # few short rounds, numbers are noisy
+npm run benchmark -- --json results.json           # also write the results as JSON
+npm run benchmark:smoke                            # jest: see below
+npm run benchmark -- --profile update large        # CPU profile of one operation or stage
+npm run benchmark -- --profile create large --build baseline --out create.cpuprofile
+EXTRA_SCHEMA=path/to/module.js npm run benchmark  # also run one more schema, see below
+BASELINE=../other/packages/dynamoose npm run benchmark  # compare against another build (needs its dist)
+BASELINE=../base/packages/dynamoose npm run benchmark -- --gate   # the CI gate, see below
+BASELINE=... npm run benchmark -- --gate --quick   # 2 rounds of 20 ms: checks the run, never significant
 ```
 
-## Schema Complexity Levels
+The script needs `node --expose-gc`; the npm script passes it.
 
-The benchmarks test four different schema complexity levels:
+`npm run benchmark:smoke` (jest, `smoke.test.js` and `gate.test.js`) checks that `--quick` reports
+every operation and stage, that `--profile` writes a profile (update on large) and works with
+`EXTRA_SCHEMA`, the gate's verdict rule, and that `--gate` passes on two quick rounds, refuses to run
+without `BASELINE` or with an invalid `--rounds` or scale, and on a forced slowdown (`BENCHMARK_SCALE_CURRENT`, a test hook) re-runs, exits
+with code 1 and writes the profiles and comparisons.
 
-### Small Schema
-- Simple flat structure with basic types
-- Fields: `id`, `name`, `email`, `age`, `active`
-- Use case: Basic user profiles
+## Method
 
-### Medium Schema  
-- Nested objects and arrays
-- Validation rules and default values
-- Fields: Profile data, preferences, metadata
-- Use case: User profiles with settings
+- Every operation warms up on both builds, then runs in rounds. A round measures each operation on
+  both builds for a fixed time, with `gc()` before each measurement. The build that goes first
+  alternates per round.
+- The input of each call (a new Item, a key, an update object) is made outside the timed part.
+- The table shows the median ops/s over the rounds per build, and the change of current against
+  baseline. The JSON file also has the samples of every round.
 
-### Large Schema
-- Complex nested structures 
-- Multiple validation rules
-- Professional info, contact details, social connections
-- Use case: Enterprise user management
+## Operations
 
-### Extra Large Schema
-- Maximum complexity with all DynamoDB data types
-- **Complex Data Types Included**:
-  - **Sets**: String sets, Number sets, Buffer sets
-  - **Binary Data**: Buffer types for binary storage
-  - **Multi-Type Fields**: Fields that accept multiple types (String | Number)
-  - **NULL Values**: Explicit NULL type support
-  - **Constant Values**: Fields with constant values
-  - **Combined Fields**: Automatically generated from other field combinations
-  - **Date Options**: Dates with custom storage formats (ISO, milliseconds, seconds)
-  - **Nested Sets**: Sets within nested objects
-- Use case: Complex enterprise applications with rich data models
+| operation        | call                                             | stub response                 |
+| ---------------- | ------------------------------------------------ | ----------------------------- |
+| `create`         | `new Model(data).save()`                         | `putItem`: `{}`               |
+| `create-request` | `new Model(data).save({"return": "request"})`    | none                          |
+| `get`            | `Model.get(key)`                                 | `getItem`: the stored item    |
+| `update`         | `Model.update(key, {attribute: object})`         | `updateItem`: the stored item |
+| `update-nested`  | `Model.update(key, {"$SET": {"a.b": value}})`    | `updateItem`: the stored item |
 
-## Configuration
+The stored item is the `putItem` request of the baseline build for one generated item.
 
-### Benchmark Settings
-- **Warmup Runs**: 200 (for JIT optimization)
-- **Benchmark Runs**: 1000 (for statistical accuracy)
-- **Model Operation Test Items**: 1000 per schema type
+## Stages (report only)
 
-### Local DynamoDB
-The benchmarks are configured to use local DynamoDB:
-- **Endpoint**: `http://localhost:8000`
-- **Auto Table Management**: Tables are automatically created and cleaned up
-- **Cleanup**: All created tables are deleted after benchmark completion
+The run also measures internal stages of the operations above, on every schema, in a second table
+(`stages` in the JSON file). The settings are the ones `save` and `get` pass.
 
-## Output Metrics
+| stage                         | call                                                                 |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `getAttributeValue`           | `schema.getAttributeValue(attribute)` for every attribute (one op)   |
+| `getAttributeTypeDetails`     | `schema.getAttributeTypeDetails(attribute)` for every attribute      |
+| `attributes`                  | `schema.attributes()`                                                |
+| `getTypePaths`                | `schema.getTypePaths(data, {"type": "toDynamo"})`                    |
+| `objectFromSchema-toDynamo`   | `Item.objectFromSchema` with the `save` settings                     |
+| `objectFromSchema-fromDynamo` | `Item.objectFromSchema` with the `get` settings, on the stored item  |
+| `save-conform`                | `conformToSchema` on the stored item, the second pass of `save`      |
 
-Each benchmark provides comprehensive statistics:
+## Profile mode
 
-### Performance Metrics
-- **Mean**: Average operation time in milliseconds
-- **Median**: Middle value operation time
-- **Min/Max**: Fastest and slowest operation times
-- **Percentiles**: P90, P95, P99 for latency distribution analysis
-- **Standard Deviation**: Measure of performance consistency
-- **Coefficient of Variation**: Relative variability percentage
+`--profile <name> <schema>` runs one operation or stage on one build (`--build current|baseline`,
+default `current`) under the V8 CPU profiler, 5 seconds (`--quick`: 0.3 seconds) after a warm-up. The
+inputs are made before the profiler starts. It writes a `.cpuprofile` (`--out <file>`, default
+`<build>-<schema>-<name>.cpuprofile`; open it in Chrome DevTools or speedscope) and prints:
 
-### Throughput Metrics
-- **Operations per Second**: Calculated from mean execution time
-- **Memory Usage**: Heap memory tracking throughout benchmark
+- the top functions by self time and by total time, with file and line in `dist` (the line of the
+  compiled JavaScript)
+- the self time per file, dynamoose and its dependencies
 
-### Comparison Tables
-- **Performance Table**: Side-by-side latency comparison across schema sizes
-- **Throughput Table**: Operations per second comparison
+Total time counts a function once per sample, also when it is on the stack more than once.
 
-## Example Output
+## CI gate
 
+The `benchmark-gate` job of `.github/workflows/ci.yml` runs when a pull request is opened or gets new
+commits, on Node 24 (the runtime of the prod Lambdas). It checks out the pull request and its base branch, installs and builds
+both, runs `npm run benchmark:smoke`, then `npm run benchmark -- --gate` with `BASELINE` set to the
+base checkout. `--gate` refuses to run without `BASELINE`, so that it cannot compare with the published
+release by mistake.
+
+`--gate` runs the operations and stages of the large and checkout schemas, 20 interleaved rounds of
+150 ms. Only `create`, `get` and `update` on these two schemas can fail the job. All other rows are report
+only. A gated operation fails when both are true:
+
+- its median ops/s is more than 15% below the base
+- a one-sided Mann-Whitney U test over the round samples gives p < 0.01
+
+A failed operation runs again (20 new rounds; `--rounds <n>` changes the count). Only a failure in both
+runs fails the job. Then the gate
+profiles the operation on both builds and writes to `--artifacts <directory>` (default `benchmark-gate`):
+the `.cpuprofile` and the summary (`.txt`) per build, and `<schema>-<operation>-comparison.txt`, the
+functions whose self time per call grew most. The job uploads that directory as the `benchmark-gate`
+artifact, and the log prints the comparison.
+
+Limits: the gate compares each pull request with its base only, so slowdowns under 15% can add up over
+several pull requests, and it covers only the gated rows. Compare with the published release
+(`npm run benchmark` without `BASELINE`) before a release to see the total change.
+
+## Results: schema lookup cache vs 4.2.4
+
+Measured on 2026-10-14, plain `node --expose-gc`, full runs (10 rounds of 200 ms), median ops/s, on a
+12-core machine that also ran other work. Absolute ops/s depend on the load, so compare only the change
+within one run. In a quiet run the noise is about ±2.5% (±7% for small `get`).
+
+- Run A: Node 24.21, load average 5.9 to 7.7, first version of the cache.
+- Run B: Node 24.22, load average 40.4 to 62.7, first version of the cache.
+- Run C: Node 24.22, load average 8.0 to 4.5, after the review fixes (the public `getAttributeTypeDetails`
+  builds a new result per call, `lib/` uses the shared one). This is the current code.
+
+| schema      | operation | run A change | run B change | run C baseline | run C current | run C change |
+| ----------- | --------- | -----------: | -----------: | -------------: | ------------: | -----------: |
+| large       | create    |      +126.5% |       +79.7% |          129.9 |         297.4 |      +129.0% |
+| large       | get       |      +145.7% |      +147.0% |          270.5 |         661.7 |      +144.6% |
+| large       | update    |      +141.9% |      +135.9% |          157.7 |         379.9 |      +140.9% |
+| extra-large | create    |      +113.6% |      +108.0% |           74.7 |         164.6 |      +120.3% |
+| extra-large | get       |            - |      +154.2% |          154.3 |         364.5 |      +136.2% |
+| extra-large | update    |      +122.1% |      +127.0% |           92.1 |         219.8 |      +138.6% |
+| checkout    | create    |       +53.9% |       +61.8% |          147.3 |         219.0 |       +48.6% |
+| checkout    | get       |       +79.7% |       +99.8% |          321.0 |         562.4 |       +75.2% |
+| checkout    | update    |      +140.7% |      +121.5% |           98.3 |         240.4 |      +144.4% |
+
+Every operation on every schema was faster in all three runs. In run C the `getAttributeTypeDetails`
+stage (the public method, now uncached) is +13% to +61%, and the checkout `getTypePaths` stage, which the
+cache does not cover, is -3.3% (noise level); every other stage is faster. Under `node --import tsx` the
+gains look smaller (checkout create about +14%), because tsx hooks every `require` and `Item` calls
+`require` inline per value. Use plain `node` for numbers.
+
+## Schemas
+
+`schemas.js` holds the schemas, their test data and the configs that `benchmark.js` and the equivalence
+corpus use. Each factory takes the dynamoose build, so each build gets its own Schema instance.
+
+- **small**: flat, five attributes. No nested attribute, so no `update-nested`.
+- **medium**: nested objects, an array, `validate`, `enum`, `default`.
+- **large**: hash and range key, deep nesting, arrays of objects, many `validate`, `enum`,
+  `required` and `default` settings.
+- **extra-large**: large plus sets, `Buffer`, a multi-type attribute, `NULL` and a Date `storage`
+  setting.
+- **checkout**: `fixtures/checkout-schema.js`, the schema of `@monei/common` `OperationModel` (the
+  `checkouts` table), generated once from common. Its header comment says how, and which function
+  settings it replaces with plain functions. The data is a confirmed card payment with invented values.
+
+## Live schema from `@monei/common` (EXTRA_SCHEMA)
+
+The fixture lacks the cost of common's zod-backed `validate` functions. To measure the real schema,
+set `EXTRA_SCHEMA` to a module that exports one schema in the shape of the fixture (`name`, `create`,
+`data`, `key`, `update`, optional `nestedUpdate`). `name` must differ from the built-in schemas. Run
+it from a checkout of common with `tsx`, so the module can import common's TypeScript source:
+
+```ts
+// live-checkout.ts, next to a checkout of common
+import {operationSchema} from './src/models/OperationModel';
+import {extractTimestamps, toSchemaDef} from './src/zod/converter';
+import {dynamoose as commonDynamoose} from './src/utils/dynamoose';
+const fixture = require('<dynamoose>/packages/dynamoose/benchmarks/fixtures/checkout-schema.js');
+
+// common's dynamoose.type symbols are not the symbols of the benchmarked builds.
+const remap = (value: any, types: any): any => {
+  for (const name of ['NULL', 'ANY', 'THIS']) if (value === commonDynamoose.type[name]) return types[name];
+  if (Array.isArray(value)) return value.map((v) => remap(v, types));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, remap(v, types)]));
+  return value;
+};
+
+module.exports = {
+  ...fixture,
+  name: 'checkout-live',
+  create: (dynamoose: any) => {
+    const {schema, saveUnknown} = toSchemaDef(operationSchema as any);
+    const {createdAt, updatedAt, ...definition} = schema as any; // what toDynamooseSchema omits
+    return new dynamoose.Schema(remap(definition, dynamoose.type), {saveUnknown, timestamps: extractTimestamps(operationSchema as any)});
+  }
+};
 ```
-📊 PERFORMANCE COMPARISON TABLE
-================================================================================
-Schema Size    | Model.update (ms) | Model.get (ms)
----------------|-------------------|---------------
-small          | 0.809             | 0.437
-medium         | 3.521             | 1.561
-large          | 12.049            | 5.988
-extra-large    | 16.467            | 8.321
 
-📈 THROUGHPUT COMPARISON (ops/sec)
-================================================================================
-Schema Size    | Model.update      | Model.get
----------------|-------------------|----------
-small          | 1236.01           | 2285.87
-medium         | 283.97            | 640.79
-large          | 82.99             | 167.00
-extra-large    | 60.73             | 120.18
-```
-
-## Prerequisites
-
-### Required Setup
-1. **Local DynamoDB**: Must be running on `http://localhost:8000`
-   ```bash
-   # Download and run DynamoDB Local
-   java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb -port 8000
-   ```
-
-2. **Dependencies**: Install all project dependencies
-   ```bash
-   npm install
-   ```
-
-3. **Build**: Ensure Dynamoose is built
-   ```bash
-   npm run build
-   ```
-
-## Running Benchmarks
-
-### Individual Benchmarks
 ```bash
-# Schema conversion benchmarks only
-npm run benchmark:conversions
-
-# Model operation benchmarks only  
-npm run benchmark:models
+# In the checkout of common (the env values are the ones of vitest.config.ts)
+STAGE=dev PROJECT=monei AWS_REGION=us-east-1 POWERTOOLS_LOG_LEVEL=SILENT EXTRA_SCHEMA=live-checkout.ts \
+  node --expose-gc --import tsx <dynamoose>/packages/dynamoose/benchmarks/benchmark.js
 ```
-
-### All Benchmarks
-```bash
-# Run complete benchmark suite
-npm run benchmark
-```
-
-## Interpreting Results
-
-### Performance Analysis
-- **Latency Growth**: Notice how operation time increases with schema complexity
-- **Throughput Impact**: Observe how complex schemas reduce operations per second
-- **Memory Usage**: Monitor heap memory consumption patterns
-
-### Use Case Guidance
-- **Small/Medium schemas**: Suitable for high-throughput applications
-- **Large schemas**: Good balance of features and performance  
-- **Extra-large schemas**: Use when rich data modeling is required, plan for lower throughput
-
-### Optimization Insights
-- Complex nested objects significantly impact performance
-- Set types and binary data add processing overhead
-- Consider schema simplification for performance-critical applications
-
-## Schema Files
-
-- **`schemas.js`**: Contains all schema definitions
-- **Data generators**: Test data creation for each schema complexity level
-- **Complex types**: Examples of all supported DynamoDB data types
-
-## Advanced Data Types
-
-The extra-large schema demonstrates all supported DynamoDB data types:
-
-### Basic Types
-- `String`, `Number`, `Boolean`, `Date`, `Buffer`, `Object`, `Array`
-
-### Set Types
-```javascript
-"stringSet": {
-  "type": Set,
-  "schema": [String]
-},
-"numberSet": {
-  "type": Set, 
-  "schema": [Number]
-},
-"bufferSet": {
-  "type": Set,
-  "schema": [Buffer]
-}
-```
-
-### Special Types
-```javascript
-// Multiple allowed types
-"multiType": [String, Number],
-
-// NULL values
-"nullableField": dynamoose.type.NULL,
-
-// Constant values
-"constantValue": {
-  "type": dynamoose.type.CONSTANT,
-  "value": "EXTRA_LARGE_SCHEMA"
-},
-
-// Combined fields
-"combinedIds": {
-  "type": dynamoose.type.COMBINE,
-  "attributes": ["id", "userId"],
-  "separator": "#"
-},
-
-// Date with storage options
-"dateWithOptions": {
-  "type": Date,
-  "storage": "iso"  // or "milliseconds" or "seconds"
-}
-```
-
-## Performance Characteristics
-
-### Typical Results by Schema Size
-
-| Schema | Update (ms) | Get (ms) | Update (ops/sec) | Get (ops/sec) |
-|--------|-------------|----------|------------------|---------------|
-| Small | ~0.8 | ~0.4 | ~1,200 | ~2,300 |
-| Medium | ~3.5 | ~1.6 | ~280 | ~640 |
-| Large | ~12 | ~6 | ~80 | ~170 |
-| Extra-Large | ~16 | ~8 | ~60 | ~120 |
-
-### Performance Factors
-
-**Schema Complexity Impact:**
-- Each level of nesting adds processing overhead
-- Validation rules increase serialization time
-- Set types require additional processing
-- Binary data impacts memory usage
-
-**Operation Type Impact:**
-- `Get` operations are generally 2-3x faster than `Update`
-- `fromDynamo` is typically faster than `toDynamo`
-- Strict mode adds minimal overhead
-
-## Table Management
-
-The benchmarks automatically handle DynamoDB table lifecycle:
-
-1. **Auto-Creation**: Tables are created when first item is saved
-2. **Naming**: Uses timestamp-based unique names to avoid conflicts
-3. **Cleanup**: All tables are deleted after benchmark completion
-4. **Error Handling**: Graceful handling of table creation/deletion failures
-
-## Memory Management
-
-Memory usage patterns:
-- **Small schemas**: ~15-20MB heap usage
-- **Medium schemas**: ~20-30MB heap usage  
-- **Large schemas**: ~30-45MB heap usage
-- **Extra-large schemas**: ~40-50MB heap usage
-
-Memory is tracked throughout benchmarks and reported in results.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **DynamoDB Connection**
-   ```bash
-   # Check if local DynamoDB is running
-   curl http://localhost:8000
-   ```
-
-2. **Build Issues**
-   ```bash
-   # Clean and rebuild
-   npm run build:clean
-   npm run build
-   ```
-
-3. **Memory Issues**
-   ```bash
-   # Reduce benchmark runs if needed
-   # Edit BENCHMARK_CONFIG.modelOperationRuns in benchmark files
-   ```
-
-4. **Timeout Issues**
-   - Large schemas may take longer
-   - Benchmark automatically handles timeouts with 30-second limits
-
-### Debug Mode
-
-Enable detailed logging:
-```bash
-DEBUG=dynamoose* npm run benchmark
-```
-
-## Contributing
-
-When contributing to benchmarks:
-
-1. **Schema Changes**: Update both schema definitions and test data generators
-2. **New Data Types**: Add examples to extra-large schema
-3. **Performance Tests**: Ensure adequate warmup and sample sizes
-4. **Documentation**: Update README with new features
-5. **Table Cleanup**: Verify proper cleanup of created resources
-
-## Files Structure
-
-```
-benchmarks/
-├── README.md                           # This file
-├── schemas.js                          # Schema definitions
-├── schema-conversions-benchmark.js     # Conversion benchmarks  
-├── model-operations-benchmark.js       # CRUD operation benchmarks
-└── utils/
-    └── benchmark-runner.js             # Shared benchmark utilities
-```
-
-## Notes
-
-- All benchmarks include proper error handling and timeout management
-- Tables are automatically created and cleaned up to prevent conflicts
-- Memory tracking provides insights into resource usage patterns
-- Statistical accuracy improved with 1000+ runs per test
-- Complex data types demonstrate full DynamoDB feature support

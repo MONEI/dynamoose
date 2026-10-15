@@ -6,6 +6,12 @@
 
 - Added support for enabling and configuring DynamoDB Streams through Table options
 
+### General
+
+- Improved performance by caching schema lookups per Schema: `Model.create`/`Item.save`, `Model.get` and `Model.update` are about 1.5 to 2.5 times as fast on large schemas
+- Improved `Model.update` performance for nested paths (`a.b`, `a[0].b`): the nested paths of one update are converted together instead of one full schema pass per path, about 10 to 30 times as fast as 4.2.4
+- A Schema caches its lookups: it assumes that its definitions and dynamoose's internal methods are not changed or wrapped after `new Schema()` (for example an edited nested definition object, a type constructor whose `toString()` changes, lookup methods redefined as getters, or a wrapped `getInternalProperties`)
+
 ### Bug Fixes
 
 - Fixed `Model.update` being impossible to run against a schema whose hash or range key is a `Combine` attribute
@@ -21,3 +27,7 @@
 - Fixed `Model.update` treating a nested path component as the top-level attribute of the same name, for combine sources and forced defaults
 - Fixed `Model.update` throwing "all or none of the combine attributes" when the update writes none of them
 - Fixed `Model.update` writing `NULL` for a nested key the schema drops (not declared and not covered by `saveUnknown`, also inside a schemaless `Object`); the path is skipped, as a full write of the parent drops the key
+- Fixed `Model.update` applying a parent attribute's forced default over a nested-path value. A nested path under a parent with declared children and its own `validate` or `set` now throws `InvalidParameter` (write the whole parent): that rule would see only the written key. A parent without declared children (a record, a schemaless `Object`) still runs its `validate` and `set` on the written entries
+- Fixed `Model.update` writing an empty map for a nested path through `__proto__`; a nested path through `__proto__` or `constructor` now throws `InvalidParameter`
+- Fixed `Model.update` succeeding without writing anything requested (or sending an empty update, which DynamoDB rejects) when every key it requests is a nested key the schema drops; it now throws `InvalidParameter` naming those keys, also when timestamps or forced defaults would still be written
+- Fixed `Model.update` removing a nested path under an attribute with several definitions (`[A, B]`) when no definition accepts the value; it now throws `TypeMismatch`

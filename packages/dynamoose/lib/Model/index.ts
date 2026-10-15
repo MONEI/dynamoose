@@ -822,15 +822,80 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 		// A nested value goes through the schema the same way a top-level one does: wrap it in the
 		// object its path describes, convert that, and read the value back. Every list index maps to
 		// element 0, since all elements of a list share one schema. Required is checked separately,
-		// on the path itself, because the wrapper lacks the siblings of the value. Returns undefined
-		// when the schema drops the value.
-		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => {
-			const segments = parsePathWithArrayIndices(path);
-			const wrapped = segments.reduceRight((child, segment) => segment.type === "index" ? [child] : {[segment.value]: child}, value as any);
-			const converted = await this.Item.objectFromSchema(wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false} as any);
-			const result = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
-			return result === undefined ? undefined : awsConverter().convertToAttr(result);
+		// on the path itself, because the wrapper lacks the siblings of the value, and the other rules
+		// skip the ancestors for the same reason (`nestedScope`). One conversion of the whole schema
+		// per path is the cost here, so the paths share one wrapper. A path cannot share one when one
+		// path is inside another, when it goes through a list index (elements would merge into
+		// element 0) or an attribute with several definitions (one definition would be picked for
+		// all), or when a schema-level or ancestor set or validate would see the other paths' values.
+		// Maps each path to its converted value, or to undefined when the schema drops it.
+		const convertNestedValues = async (entries: [string, ValueType][], settings: ObjectType): Promise<Map<string, any>> => {
+			const schemaSettings = schema.getInternalProperties(internalProperties).settings;
+			const hasSchemaCallback = (settings.modifiers ?? []).some((modifier) => schemaSettings[modifier]) || settings.validate && schemaSettings.validate;
+			const wrappers: {"wrapped": ObjectType; "paths": string[]; "entries": [string, PathSegment[]][]; "shared": boolean}[] = [];
+			for (const [path, value] of entries) {
+				const segments = parsePathWithArrayIndices(path);
+				// The object utilities objectFromSchema uses ignore these names, so the value would be lost
+				if (segments.some((segment) => segment.value === "__proto__" || segment.value === "constructor")) {
+					throw new CustomError.InvalidParameter(`${path} cannot be updated: __proto__ and constructor are not allowed as nested attribute names.`);
+				}
+				const genericPath = segments.map((segment) => segment.type === "index" ? 0 : segment.value).join(".");
+				const shared = !hasSchemaCallback && !segments.some((segment) => segment.type === "index") && !multiTypeAncestor(segments) && !ancestorHasRule(segments, settings);
+				let wrapper = shared ? wrappers.find((existing) => existing.shared && !existing.paths.some((other) => other === genericPath || other.startsWith(`${genericPath}.`) || genericPath.startsWith(`${other}.`))) : undefined;
+				if (!wrapper) {
+					wrapper = {"wrapped": {}, "paths": [], "entries": [], "shared": shared};
+					wrappers.push(wrapper);
+				}
+				let parent: any = wrapper.wrapped;
+				segments.forEach((segment, i) => {
+					const key = segment.type === "index" ? 0 : segment.value;
+					if (i === segments.length - 1) {
+						parent[key] = value;
+					} else {
+						parent[key] = parent[key] ?? (segments[i + 1].type === "index" ? [] : {});
+						parent = parent[key];
+					}
+				});
+				wrapper.paths.push(genericPath);
+				wrapper.entries.push([path, segments]);
+			}
+			const result = new Map<string, any>();
+			for (const wrapper of wrappers) {
+				const converted = await this.Item.objectFromSchema(wrapper.wrapped, this, {"type": "toDynamo", "customTypesDynamo": true, "saveUnknown": true, "mapAttributes": true, ...settings, "required": false, "nestedScope": wrapper.paths} as any);
+				for (const [path, segments] of wrapper.entries) {
+					const value = segments.reduce((parent, segment) => parent?.[segment.type === "index" ? 0 : segment.value], converted as any);
+					result.set(path, value === undefined ? undefined : awsConverter().convertToAttr(value));
+				}
+			}
+			return result;
 		};
+		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => (await convertNestedValues([[path, value]], settings)).get(path);
+		// The nearest ancestor of a nested path that has several definitions (`[A, B]`), if any
+		function multiTypeAncestor (segments: PathSegment[]): string | undefined {
+			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
+			for (let i = parts.length - 1; i > 0; i--) {
+				const ancestor = parts.slice(0, i).join(".");
+				try {
+					if (Array.isArray(schema.getAttributeValue(ancestor))) {
+						return ancestor;
+					}
+				} catch (e) {} // eslint-disable-line no-empty
+			}
+			return undefined;
+		}
+		// Whether an ancestor of a nested path has a set or validate rule these settings apply
+		function ancestorHasRule (segments: PathSegment[], settings: ObjectType): boolean {
+			const rules = [...settings.validate ? ["validate"] : [], ...settings.modifiers ?? []];
+			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
+			return parts.slice(0, -1).some((part, i) => rules.some((rule) => {
+				try {
+					const value = schema.getAttributeSettingValue(rule, parts.slice(0, i + 1).join("."), {"returnFunction": true});
+					return Array.isArray(value) ? value.some(Boolean) : Boolean(value);
+				} catch (e) {
+					return false;
+				}
+			}));
+		}
 		const isSchemaPath = (path: string): boolean => {
 			try {
 				return Boolean(schema.getAttributeValue(path.replace(/\[(\d+)\]/gu, ".$1")));
@@ -922,6 +987,31 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				Object.keys(convertedKeyObj).forEach((key) => delete updateObj[key]);
 			}
 
+			// The nested paths of each update type, converted together. The loop below converts any path
+			// not found here on its own.
+			const nestedValueEntries = new Map<string, [string, ValueType][]>();
+			for (const key of Object.keys(updateObj)) {
+				const isUpdateType = typeof updateObj[key] === "object" && updateTypeNames.includes(key);
+				const value = isUpdateType ? updateObj[key] : {[key]: updateObj[key]};
+				const updateTypeName = isUpdateType ? key : "$SET";
+				if (!value || Array.isArray(value) || updateTypesMap.get(updateTypeName).attributeOnly) {
+					continue;
+				}
+				for (const [subKey, subValue] of Object.entries(value)) {
+					// A path with an empty component is left to the loop, which rejects it
+					const isNestedPath = (subKey.includes("[") || subKey.includes(".")) && !subKey.split(".").some((component) => !component);
+					if (isNestedPath && subValue !== undefined && subValue !== type.UNDEFINED) {
+						nestedValueEntries.set(updateTypeName, [...nestedValueEntries.get(updateTypeName) ?? [], [subKey, subValue as ValueType]]);
+					}
+				}
+			}
+			const convertedNestedValues = new Map<string, Map<string, any>>();
+			for (const [updateTypeName, entries] of nestedValueEntries) {
+				convertedNestedValues.set(updateTypeName, await convertNestedValues(entries, updateTypesMap.get(updateTypeName).objectFromSchemaSettings));
+			}
+			const skippedNestedPaths: string[] = [];
+			let requestedWrites = 0;
+
 			const returnObject = await Object.keys(updateObj).reduce(async (accumulatorPromise, key) => {
 				const accumulator = await accumulatorPromise;
 				let value = updateObj[key];
@@ -1010,11 +1100,20 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						if (hasArrayIndex || hasDotNotation) {
 							// An undefined value stays undefined, so the path is removed below, as a top-level attribute is
 							if (subValue !== undefined) {
-								subValue = await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
+								const value = subValue;
+								const converted = convertedNestedValues.get(updateType.name);
+								subValue = converted?.has(subKey) ? converted.get(subKey) : await convertNestedValue(subKey, subValue, updateType.objectFromSchemaSettings);
 								if (subValue === undefined && !isSchemaPath(subKey)) {
 									// The schema drops this key (not declared, not covered by saveUnknown), as a full
 									// write of the parent would: skip the path, never write it as NULL
+									skippedNestedPaths.push(subKey);
 									continue;
+								}
+								// A definition of a multi-type ancestor declares this path, but none accepts the value.
+								// Removing the path below would delete the stored value instead of rejecting the write.
+								const ancestor = subValue === undefined ? multiTypeAncestor(parsePathWithArrayIndices(subKey)) : undefined;
+								if (ancestor) {
+									throw new CustomError.TypeMismatch(`${subKey} with a value of ${JSON.stringify(value)} matches no definition of ${ancestor}.`);
 								}
 								if (subValue !== undefined) {
 									// Mark this value as already converted to prevent double conversion later
@@ -1135,6 +1234,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 					const operator = updateType.operator || (updateType.attributeOnly ? "" : " ");
 
 					accumulator.UpdateExpression[updateType.name.slice(1)].push(`${finalExpressionKey}${operator}${expressionValue}`);
+					requestedWrites++;
 
 					index++;
 				}
@@ -1184,7 +1284,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			// Single pass through schema attributes to find and process combine types
 			const combineAttributes = [];
 			for (const attribute of schemaAttributes) {
-				const type = schema.getAttributeTypeDetails(attribute);
+				const type = schema.getInternalProperties(internalProperties).getSharedAttributeTypeDetails(attribute);
 				const isCombineType = Array.isArray(type) ? type.some((t) => t.name === "Combine") : type.name === "Combine";
 
 				if (isCombineType) {
@@ -1329,17 +1429,23 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				delete returnObject.ExpressionAttributeValues;
 			}
 
+			const updateExpression = Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
+				const value = returnObject.UpdateExpression[key];
+
+				if (value.length > 0) {
+					return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
+				} else {
+					return accumulator;
+				}
+			}, "");
+			// Timestamps and forced defaults alone would let the update succeed without anything it asked for
+			if (requestedWrites === 0 && skippedNestedPaths.length > 0) {
+				throw new CustomError.InvalidParameter(`Nothing to update: the schema does not declare ${skippedNestedPaths.join(", ")}.`);
+			}
+
 			return {
 				...returnObject,
-				"UpdateExpression": Object.keys(returnObject.UpdateExpression).reduce((accumulator, key) => {
-					const value = returnObject.UpdateExpression[key];
-
-					if (value.length > 0) {
-						return `${accumulator}${accumulator.length > 0 ? " " : ""}${key} ${value.join(", ")}`;
-					} else {
-						return accumulator;
-					}
-				}, "")
+				"UpdateExpression": updateExpression
 			};
 		};
 
