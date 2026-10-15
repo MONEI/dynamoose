@@ -889,7 +889,9 @@ Item.objectFromSchema = async function (object: any, model: Model<Item>, setting
 		}
 	}
 	// Skip required validation when readStrict is false (data from DB is assumed valid)
-	if (settings.required && !skipValidationForNonStrictRead) {
+	// A nested write of a leaf has nothing below it to check, so it skips the walk of the item
+	const hasAttributesInScope = (): boolean => !settings.nestedScope || schema.attributes().some((attribute) => settings.nestedScope.some((path) => attribute.startsWith(`${path}.`)));
+	if (settings.required && !skipValidationForNonStrictRead && hasAttributesInScope()) {
 		let attributesToCheck = await Item.attributesWithSchema(returnObject, model);
 		if (settings.required === "nested") {
 			attributesToCheck = attributesToCheck.filter((attribute) => utils.object.keys(returnObject).find((key) => attribute === key || attribute.startsWith(key + ".")));
