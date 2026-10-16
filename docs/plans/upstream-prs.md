@@ -124,7 +124,7 @@ The work found bugs in the fork's own code. The upstream branches do not have th
 5. **The `readStrict: false` read path loses data.** It returns lists with an `ANY` schema as empty and drops the fields of range-key model references. It throws "modifierFunction is not a function" on a multi-type attribute with a `get` modifier.
 6. **`$REMOVE` inside a list element is rejected,** although DynamoDB accepts it (see above).
 
-Bugs 1 and 2 matter only where caller input reaches an update key. Check the services before you decide on urgency.
+Bugs 1 and 2, and the nested-removal bypass below, matter only where caller input reaches an update key. **All 16 services were audited on 2026-10-16 and none is exposed**, as a regression risk or as a security one: no service uses a nested removal in any of its three spellings (a dotted or bracketed `$REMOVE` path, a dotted `$SET` key set to `undefined`, or a dotted key set to `null`, which common's `removeNullFromDb` turns into a nested `$REMOVE`), and no caller-supplied input can become a dotted update key, since the services that spread a variable into an update build it internally and typed GraphQL inputs cannot carry an `"a.b"` field name. So this family is a correctness bug for MONEI, not an exposure.
 
 ## Submitted
 
