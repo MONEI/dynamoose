@@ -128,7 +128,7 @@ Bugs 1 and 2 matter only where caller input reaches an update key. Check the ser
 
 ## Submitted
 
-All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Cross-fork stacked PRs are not possible: GitHub chains stacks through base branches, a base must exist in the target repository, and we have no push access to dynamoose/dynamoose. The 4 stacked PRs therefore target `main` and carry a `> Depends on #NNNN` line with a compare link to their own delta.
+All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Every branch still has `upstream/main` 12d22a37 as its merge base; upstream has not moved, so none needs a rebase. Tests pass on all 15. The only red checks are `CLAssistant` on every one (upstream's bot cannot write its signature file, see below) and `coverage/coveralls` on 10, 14, 5, 6 and 7, between -0.08% and -0.2%. Cross-fork stacked PRs are not possible: GitHub chains stacks through base branches, a base must exist in the target repository, and we have no push access to dynamoose/dynamoose. The 4 stacked PRs therefore target `main` and carry a `> Depends on #NNNN` line with a compare link to their own delta.
 
 | # | Branch | Upstream PR | Depends on |
 |---|---|---|---|
@@ -164,6 +164,30 @@ Two notes on the implementation:
 
 - The ancestor rule is read with `{"returnFunction": true}`. Without it `getAttributeSettingValue` **runs** the rule, which called the merchant's `validate` with no value; a first version of the guard did that and silently swallowed the resulting `TypeError`.
 - The guard keeps upstream's "declares children" condition. An automated review asked for it to refuse whenever an ancestor has any rule. That would break the documented schemaless behaviour: with `saveUnknown`, a parent's `validate` runs per written entry (`{"x": "v"}`), which branch 5 has tests for. Verified by probe.
+
+### The guard's own bug: a multi-type ancestor (2026-10-16)
+
+The first version of the guard tested `Boolean(schema.getAttributeSettingValue(setting, ancestor, {"returnFunction": true}))`. For a **multi-type attribute that call answers with one entry per definition**, so `[undefined, undefined]` read as truthy and every nested `$REMOVE` under a multi-type parent was refused, rule or not:
+
+```js
+{"id": Number, "data": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": Number}}]}
+// {"$REMOVE": ["data.a"]} -> refused, although neither definition has set or validate
+```
+
+`Model/index.ts` already had `ancestorHasRule`, which handles the array correctly, and the guard should have reused it. Both now share `attributeHasRule`. One regression test covers the multi-type case. Fixed on 5, 6 and 7, and in the fork.
+
+Both review bots (CodeRabbit and the Codex reviewer) found this on the fork PR; the test suite did not. Worth remembering for any other code that reads a schema setting: `getAttributeSettingValue` **runs** the rule unless `returnFunction` is set, and answers with an array for a multi-type attribute.
+
+### Nothing to fix upstream for the bypass
+
+The bypass does not exist on `upstream/main`: it has no nested-path updates, so `a.b` is one top-level attribute and there is no parent whose rule could be skipped. Checked against a build of 12d22a37:
+
+```
+$SET a.b             -> SET #a0 = :v0    {"#a0": "a.b"}
+$REMOVE a.b          -> REMOVE #a0        {"#a0": "a.b"}
+```
+
+So the guard is part of 5, the PR that introduces nested paths, and needs no PR of its own. Only the fork shipped the bypass, because only the fork had the feature.
 
 ### CodeQL on 10 and 14, fixed
 
