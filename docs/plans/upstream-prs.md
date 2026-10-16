@@ -126,6 +126,26 @@ The work found bugs in the fork's own code. The upstream branches do not have th
 
 Bugs 1 and 2 matter only where caller input reaches an update key. Check the services before you decide on urgency.
 
+## Submitted
+
+| # | Upstream PR | State |
+|---|---|---|
+| 15 | https://github.com/dynamoose/dynamoose/pull/1813 | Open. 16 of 17 checks pass (lint, test-types, CodeQL, `test` on Node 16-25). `CLAssistant` red, see below |
+
+### Blocker: upstream's CLA bot cannot record a signature
+
+The dedication comment was posted on 1813, but https://github.com/dynamoose/dynamoose/actions/runs/38887080746 failed:
+
+```
+Could not update the JSON file: Repository rule violations found
+Changes must be made through a pull request.
+2 of 2 required status checks are expected.
+```
+
+Upstream's ruleset "Require PRs and CI for main" was created 2026-10-11 with no bypass actors, so `.github/workflows/cla.yml` can no longer write `signatures/version1/cla.json`. The last recorded signature is 2026-06-21 (dynamoose/dynamoose#1783), before the ruleset. `recheck` fails the same way. It was flagged to the maintainer on 1813.
+
+**Hold the remaining 14 until this is fixed.** Every one of them would land on the same red check. Once the maintainer adds a bypass actor, a `recheck` comment on 1813 records the signature for all of them.
+
 ## Submission order
 
 Decided on 2026-10-16: **15 first, then 1, 2, 3.**
