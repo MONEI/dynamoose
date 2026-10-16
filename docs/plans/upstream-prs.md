@@ -148,9 +148,35 @@ All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Cross-fork stac
 | 7 | `perf-nested-update-batching` | https://github.com/dynamoose/dynamoose/pull/1826 | 1824 |
 | 14 | `perf-hot-paths` | https://github.com/dynamoose/dynamoose/pull/1827 | 1820 |
 
+### Validation bypass found and fixed in 5 (2026-10-16)
+
+A nested `$REMOVE` skipped the partial-object guard that a nested `$SET` enforces. `refuseRuleOnPartialObject` refuses writing `a.b` when `a` has its own `set` or `validate` rule and declared children, because the rule cannot vet a partial object. A removal is a partial write too, but it carries no value, so it never reached that check:
+
+```
+$SET a.b             -> REFUSED
+$REMOVE a.b          -> ALLOWED        (before the fix)
+$SET a.b = undefined -> ALLOWED        (before the fix, same bypass, other spelling)
+```
+
+Reproduced against published `@monei-js/dynamoose@4.2.6` and `@4.3.0`, so the fork shipped it as well. Fixed in branch 5 by `refuseRemoveUnderRuleAncestor` in `Model/index.ts`, which refuses both spellings before the expression is built. Three regression tests: `$REMOVE`, `$SET` to undefined, and a path inside a list element (`reps[0].name`, so the index-to-`0` mapping of ancestors is pinned). Suite 2554 -> 2560, integration still 28/28.
+
+Two notes on the implementation:
+
+- The ancestor rule is read with `{"returnFunction": true}`. Without it `getAttributeSettingValue` **runs** the rule, which called the merchant's `validate` with no value; a first version of the guard did that and silently swallowed the resulting `TypeError`.
+- The guard keeps upstream's "declares children" condition. An automated review asked for it to refuse whenever an ancestor has any rule. That would break the documented schemaless behaviour: with `saveUnknown`, a parent's `validate` runs per written entry (`{"x": "v"}`), which branch 5 has tests for. Verified by probe.
+
 ### CodeQL on 10 and 14, fixed
 
 CodeQL raised 2 high-severity "insecure randomness" alerts on 1820, for `Math.random()` behind `userId` and `sessionId` in `benchmarks/schemas.js`. All 7 `Math.random()` uses are gone: the `schemas.js` fixture ids are a counter, and `externalOrderId` in `benchmarks/fixtures/order-schema.js` uses `crypto.randomInt`. The counter also removes a real benchmark defect, `multiType` flipping between a string and a number from run to run, which made the fixtures differ between the runs a benchmark compares. Folded into the existing benchmark commit on both branches, so neither PR gained a commit. Suite counts unchanged (2459 and 2463), benchmark smoke 14/14.
+
+### Coverage (2026-10-16)
+
+Upstream keeps ~100% line coverage, so Coveralls fails on any drop. Fixed on 1, 9, 10 and 14; 5, 6 and 7 keep one uncovered line.
+
+- **9**: the new fast path (`typeof obj !== "object"`) also returns for a function, which left upstream's `if (obj instanceof Function)` block unreachable. Removed it, `deep_copy.js` back to 100%.
+- **10 and 14**: `test/Equivalence.js` loads `equivalence/` and `benchmarks/`, so jest instrumented the harness and the corpus as library code (-1.1%). Added `coveragePathIgnorePatterns` for both. Back to 100% lines.
+- **4**: the `.match(...) || []` fallback cannot be reached. Rewritten to test each name key against the expression text, which has no fallback. Exactly the upstream baseline (99.81 / 98.88 / 100 / 100). The same rewrite is in 5, which carries this fix.
+- **5, 6, 7**: one uncovered line remains, the `return undefined` of `multiTypeAncestor`. It is only called for a path the schema declares, and every such path in the tests has a multi-type ancestor; no test reaches the default. Left as it is rather than restructured to hide it.
 
 ### Blocker: upstream's CLA bot cannot record a signature
 
