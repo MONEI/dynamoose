@@ -1,8 +1,10 @@
 # Upstream PRs from the fork
 
-Status 2026-10-15 (updated the same evening: branch 14, fork port). Goal: send every fork change that upstream can use to dynamoose/dynamoose, so that later syncs from upstream are cheap.
+Status 2026-10-16: every branch re-verified against `upstream/main` 12d22a37. Goal: send every fork change that upstream can use to dynamoose/dynamoose, so that later syncs from upstream are cheap.
 
-Fork `origin/main` a26ceb6c (4.2.5) against `upstream/main` 12d22a37. The fork is synced: their merge base is upstream/main.
+Fork `origin/main` a9c3aef8 (4.3.0) against `upstream/main` 12d22a37. The fork is synced: their merge base is upstream/main.
+
+`upstream/main` has not moved since the branches were written, so no branch needed a rebase. Every branch still has `upstream/main` as its merge base.
 
 All branches are on `origin` (MONEI/dynamoose) only. No PR, issue or comment exists on dynamoose/dynamoose. Upstream AGENTS.md requires that a human approves each submission. You post the CLA dedication comment yourself on the first PR.
 
@@ -24,13 +26,63 @@ All suite counts are for the full unit suite (`npx jest` in `packages/dynamoose`
 | 8 | `upstream-pr/types-export` | Exporting public option and schema types and allowing mixed update operators in UpdatePartial | - | Type tests fail to compile without the change. 2388 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/types-export?expand=1) |
 | 9 | `upstream-pr/perf-converter-deep-copy` | Speeding up primitive attribute conversion and deep_copy | - | N/A, performance only. 26 new tests compare the fast path with the SDK. 2414 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-converter-deep-copy?expand=1) |
 | 10 | `upstream-pr/perf-schema-lookup-cache` | Adding a per-schema cache for attribute lookups | - | 2 of 21 SchemaCache tests fail without the cache. 50 equivalence cases against published 4.2.0 pass. 2459 passed. Benchmark: create +46-97%, get +53-181%, update +139-153% | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-schema-lookup-cache?expand=1) |
-| 11 | `upstream-pr/feat-read-strict` | Adding readStrict table option to skip schema validation on reads | - | 22 of 26 new tests and 1 type test fail without the change. 2414 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/feat-read-strict?expand=1) |
+| 11 | `upstream-pr/feat-read-strict` | Adding readStrict table option to skip schema type checks on reads | - | 22 of 26 new tests and 1 type test fail without the change. 2414 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/feat-read-strict?expand=1) |
 | 12 | `upstream-pr/fix-save-return-conformed` | Fixing save and create returning items in DynamoDB form instead of the schema form | - | 7 new tests fail without the fix (incl. a mapped timestamp). 2400 passed. Breaking | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-save-return-conformed?expand=1) |
 | 13 | `upstream-pr/test-block-http` | Blocking real HTTP requests in unit tests | - | N/A, test setup only. 2388 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/test-block-http?expand=1) |
 | 14 | `upstream-pr/perf-hot-paths` | Speeding up object entries, key standardization and the attribute tree | 10 | 1 of 4 new tests fails without the change (a cycle). Equivalence against 4.2.0 unchanged. 2463 passed. Against 10 alone: get +14-29%, update +14-56% | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-hot-paths?expand=1) |
 | 15 | `upstream-pr/fix-stream-options-undefined` | Fixing table creation with streamOptions set to undefined | - | 1 new test, fails without the fix. 2390 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-stream-options-undefined?expand=1) |
 
-Stacked branches (5, 6, 7, 14) carry their base commits. Until the base merges, review them against the base branch, for example `https://github.com/MONEI/dynamoose/compare/upstream-pr/feat-update-nested-paths...upstream-pr/perf-nested-update-batching`. After each merge, rebase the next branch on upstream/main.
+## Verification, 2026-10-16
+
+Run against `upstream/main` 12d22a37 in a clean worktree, one branch at a time, with `npm ci` whenever the lockfile changed and `npm run build` before every run.
+
+- All 15 branches: `npm run build`, `npm run lint`, `npm run test:types` and `npx jest` pass. Every suite count in the table above was reproduced exactly.
+- `upstream-pr/test-update-integration`: the 28 DynamoDB Local cases pass against `amazon/dynamodb-local` on port 8000.
+- `upstream-pr/perf-hot-paths`: `npm run benchmark:smoke` passes, 14 tests.
+- No branch adds a fork-only line. No branch touches the package name, `publishConfig`, `private`, `prepack`, `packageManager`, `NPM_TOKEN`, `.npmrc`, `CLAUDE.md`, `.mcp.json` or `docs/plans/`. The only `dynamoose-baseline` references are in 10 and 14, where the alias is the published `npm:dynamoose@4.2.0`, not the scoped fork package.
+- Benchmark timings were not re-measured. The numbers in the table are from 2026-10-15.
+
+## Stacks
+
+Four branches are bases that other branches carry. Submit a stacked branch only after its base merges, then rebase it on `upstream/main`.
+
+```
+upstream/main
+├── 1  fix-update-value-types            (independent)
+├── 2  fix-nested-force-default          (independent)
+├── 3  fix-combine-no-source             (independent)
+├── 4  fix-combine-key                   (independent, same lines as 3)
+├── 5  feat-update-nested-paths          carries 1 → 2 → 3 → 4 → "await exec in the Query and Scan promise tests"
+│   ├── 6  test-update-integration       carries 5
+│   └── 7  perf-nested-update-batching   carries 5
+├── 8  types-export                      (independent)
+├── 9  perf-converter-deep-copy          (independent)
+├── 10 perf-schema-lookup-cache          (independent; also carries the benchmark and the CI gate)
+│   └── 14 perf-hot-paths                carries 10
+├── 11 feat-read-strict                  (independent)
+├── 12 fix-save-return-conformed         (independent)
+├── 13 test-block-http                   (independent)
+└── 15 fix-stream-options-undefined      (independent)
+```
+
+Branch 5 carries rebased copies of 1-4. The added lines are identical to the standalone branches; only the surrounding context differs, because each fix sits on the one below it. Branch 5 also carries one commit that has no branch of its own: "Awaiting the request in the Query and Scan 'Should return a promise' tests". The same hunk is in 13, so both can merge in either order (see below).
+
+Until a base merges, review a stacked branch against its base, for example `https://github.com/MONEI/dynamoose/compare/upstream-pr/feat-update-nested-paths...upstream-pr/perf-nested-update-batching`.
+
+## Conflicts between independent branches
+
+From `git merge-tree` of every pair against `upstream/main`. Every pair not listed merges cleanly, apart from `PENDING_CHANGELOG.md`, which 28 of the 105 pairs touch. That one is unavoidable for any set of parallel PRs and is a one-line resolution.
+
+| Pair | Conflicting file | Note |
+|---|---|---|
+| 3 ↔ 4 | `lib/Model/index.ts`, `test/Model.js` | Both rewrite the combine loop. Merge 3 first, then rebase 4 |
+| 8 ↔ 5, 6, 7 | `lib/Model/index.ts` | One hunk: both insert at the same place near the top of the file. No shared logic |
+| 10, 14 ↔ 5, 7 | `lib/Model/index.ts` | The lookup cache rewrites the combine loop that 5 also rewrites. The one real overlap in the set |
+| 10, 14 ↔ 6 | `lib/Model/index.ts`, `packages/dynamoose/package.json` | Both add a script next to `test:types` |
+| 11 ↔ 5, 6, 7 | `lib/Item.ts` | Both change the same modifier guard in `conformToSchema` |
+| 13 ↔ 5, 6, 7 | - | Resolved on 2026-10-16: 13's `test/Query.js` and `test/Scan.js` hunk is now byte-identical to the one in 5, so git merges them in either order. 13 was force-pushed (`483b8b90` → `747d3660`), comment wording only |
+
+12 and 15 conflict with nothing at all, not even the changelog. 9 conflicts only on the changelog.
 
 ## How the upstream branches differ from the fork
 
@@ -63,7 +115,7 @@ The branches do not copy the fork. Where the fork code is wrong or fork-specific
 
 ## Fork bugs found
 
-The work found bugs in the fork's own code. The upstream branches do not have them. Bugs 1, 2 and 6 are fixed in the fork by https://github.com/MONEI/dynamoose/pull/27 (published as 4.2.6). Bugs 3-5 are fixed by the port of the upstream branches into the fork (`chore/port-upstream-prs`), which also removes the `Model.update` caches:
+The work found bugs in the fork's own code. The upstream branches do not have them. Bugs 1, 2 and 6 are fixed in the fork by https://github.com/MONEI/dynamoose/pull/27 (published as 4.2.6). Bugs 3-5 are fixed by the port of the upstream branches into the fork, https://github.com/MONEI/dynamoose/pull/28, merged and published as 4.3.0 on 2026-10-15, which also removed the `Model.update` caches:
 
 1. **Validation bypass: two spellings of one nested path.** The required and default checks use a regex on the key. The expression uses the parser. `{"$REMOVE": ["reps[0]name"]}` sends `REMOVE #a0[0].#a1` without the required check of `reps.0.name`. `{"$REMOVE": ["reps.[0].name"]}` sends an empty `UpdateExpression`. Checked against published 4.2.5.
 2. **Validation bypass: a nested `$SET` of an object skips required on its children.** `{"$SET": {"a.b": {"c": "1"}}}` is sent although `a.b.d` is required (the conversion passes `required: false`). Checked against published 4.2.5.
@@ -82,6 +134,10 @@ Bugs 1 and 2 matter only where caller input reaches an update key. Check the ser
 4. **10 (schema lookup cache)**, then **14 (hot paths)**. 10 is large but independent. It conflicts slightly with 5 in the combine loop. Send it after 5, or rebase it. Its equivalence suite compares with the last release, so a behaviour-changing PR that merges after it needs `differs` entries until upstream releases.
 5. **11 (readStrict).** It is a feature. A short issue first lets the maintainers agree on the semantics. A mismatched value skips `get` and schema filtering.
 6. **12 (save return).** It is breaking. Open an issue first. It probably belongs in the next major version.
-7. **13 (block HTTP).** `mitm` is AGPL-3.0. Ask in an issue whether upstream accepts an AGPL devDependency before you send it.
+7. **13 (block HTTP).** `mitm` is AGPL-3.0. Ask in an issue whether upstream accepts an AGPL devDependency before you send it. Its `test/Query.js` and `test/Scan.js` hunk is deliberately identical to the one inside 5, so the order against 5 does not matter.
 
-After each merge: sync the fork from upstream, delete the fork's copy of that change, and bump `dynamoose-baseline`. After the port, the fork's lib/ differs from upstream plus these branches only by the `readStrict` default (`false` in the fork).
+Every stacked branch needs a rebase on `upstream/main` after its base merges, and the pairs in the conflict table need the earlier one merged first or a rebase. Nothing else in the set has an ordering constraint.
+
+After each merge: sync the fork from upstream, delete the fork's copy of that change, and bump `dynamoose-baseline`.
+
+Since https://github.com/MONEI/dynamoose/pull/28 the fork's `lib/` is upstream plus 14 of these branches, and the only fork-only difference is the `readStrict` default (`false` in the fork). That statement comes from the port itself. The 2026-10-16 pass did not re-derive it: merging all 15 branches into one tree needs the conflicts in the table above resolved by hand, which is the submission work, not a check.

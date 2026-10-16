@@ -1,4 +1,4 @@
-Title: Adding readStrict table option to skip schema validation on reads
+Title: Adding readStrict table option to skip schema type checks on reads
 
 <!-- THANK YOU for your contribution to Dynamoose, we really appreciate you taking the time to improve this package, and look forward to reviewing your PR and getting the changes integrated into the package. Thanks again!! -->
 
