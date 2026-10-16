@@ -126,15 +126,18 @@ The work found bugs in the fork's own code. The upstream branches do not have th
 
 Bugs 1 and 2 matter only where caller input reaches an update key. Check the services before you decide on urgency.
 
-## Suggested submission order
+## Submission order
 
-1. **1-4, the four `Model.update` fixes.** They are small and independent. Send 3 before 4, or rebase the second one: they touch the same lines. Post the CLA dedication comment on the first one.
-2. **8 (types), 9 (converter) and 15 (streamOptions).** They are small. 15 fixes a bug in upstream's unreleased streams option, so send it before their next release.
-3. **5 (nested paths)** after 1-4 merge. Then **6 (integration tests)** and **7 (batching)**.
-4. **10 (schema lookup cache)**, then **14 (hot paths)**. 10 is large but independent. It conflicts slightly with 5 in the combine loop. Send it after 5, or rebase it. Its equivalence suite compares with the last release, so a behaviour-changing PR that merges after it needs `differs` entries until upstream releases.
-5. **11 (readStrict).** It is a feature. A short issue first lets the maintainers agree on the semantics. A mismatched value skips `get` and schema filtering.
-6. **12 (save return).** It is breaking. Open an issue first. It probably belongs in the next major version.
-7. **13 (block HTTP).** `mitm` is AGPL-3.0. Ask in an issue whether upstream accepts an AGPL devDependency before you send it. Its `test/Query.js` and `test/Scan.js` hunk is deliberately identical to the one inside 5, so the order against 5 does not matter.
+Decided on 2026-10-16: **15 first, then 1, 2, 3.**
+
+1. **15 (streamOptions).** It conflicts with nothing, and it fixes a bug in upstream's unreleased streams option, so it should land before their next release. Post the CLA dedication comment on this one.
+2. **1, 2 and 3, the independent `Model.update` fixes.** Then **4**, after 3 merges: 3 and 4 touch the same lines, so 4 needs a rebase.
+3. **8 (types) and 9 (converter).** Small and independent.
+4. **5 (nested paths)** after 1-4 merge. Then **6 (integration tests)** and **7 (batching)**.
+5. **10 (schema lookup cache)**, then **14 (hot paths)**. 10 is large but independent. It conflicts slightly with 5 in the combine loop. Send it after 5, or rebase it. Its equivalence suite compares with the last release, so a behaviour-changing PR that merges after it needs `differs` entries until upstream releases.
+6. **11 (readStrict).** It is a feature. A short issue first lets the maintainers agree on the semantics. A mismatched value skips `get` and schema filtering.
+7. **12 (save return).** It is breaking. Open an issue first. It probably belongs in the next major version.
+8. **13 (block HTTP).** `mitm` is AGPL-3.0. Ask in an issue whether upstream accepts an AGPL devDependency before you send it. Its `test/Query.js` and `test/Scan.js` hunk is deliberately identical to the one inside 5, so the order against 5 does not matter.
 
 Every stacked branch needs a rebase on `upstream/main` after its base merges, and the pairs in the conflict table need the earlier one merged first or a rebase. Nothing else in the set has an ordering constraint.
 
