@@ -824,18 +824,38 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			return result;
 		};
 		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => (await convertNestedValues([[path, value]], settings)).get(path);
+		// Whether an attribute has one of these rules of its own. `returnFunction` so that the rule is
+		// read, never run: calling it here would invoke a user function with no value. A multi-type
+		// attribute answers with one entry per definition.
+		const attributeHasRule = (attribute: string, rules: string[]): boolean => rules.some((rule) => {
+			try {
+				const value = schema.getAttributeSettingValue(rule, attribute, {"returnFunction": true});
+				return Array.isArray(value) ? value.some(Boolean) : Boolean(value);
+			} catch (e) {
+				return false;
+			}
+		});
 		// Whether an ancestor of a nested path has a set or validate rule these settings apply
 		const ancestorHasRule = (segments: PathSegment[], settings: ObjectType): boolean => {
 			const rules = [...settings.validate ? ["validate"] : [], ...settings.modifiers ?? []];
 			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
-			return parts.slice(0, -1).some((part, i) => rules.some((rule) => {
-				try {
-					const value = schema.getAttributeSettingValue(rule, parts.slice(0, i + 1).join("."), {"returnFunction": true});
-					return Array.isArray(value) ? value.some(Boolean) : Boolean(value);
-				} catch (e) {
-					return false;
+			return parts.slice(0, -1).some((part, i) => attributeHasRule(parts.slice(0, i + 1).join("."), rules));
+		};
+		// A parent that has its own `set` or `validate` rule cannot vet a partial write of its children,
+		// so objectFromSchema refuses one (`refuseRuleOnPartialObject`). Removing a child is a partial
+		// write too, but it carries no value, so it never reaches that check: refuse it here instead.
+		const refuseRemoveUnderRuleAncestor = (path: string, segments: PathSegment[]): void => {
+			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
+			for (let i = parts.length - 1; i > 0; i--) {
+				const ancestor = parts.slice(0, i).join(".");
+				const attributes = schema.attributes();
+				if (!attributes.includes(ancestor)) {
+					continue;
 				}
-			}));
+				if (attributeHasRule(ancestor, ["set", "validate"]) && attributes.some((attribute) => attribute.startsWith(`${ancestor}.`))) {
+					throw new CustomError.InvalidParameter(`${path} cannot be updated alone: ${ancestor} has its own set or validate rule, so write the whole ${ancestor}.`);
+				}
+			}
 		};
 		// The nearest ancestor of a nested path that has several definitions (`[A, B]`), if any
 		const multiTypeAncestor = (segments: PathSegment[]): string | undefined => {
@@ -964,6 +984,10 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 						}
 					}
 
+					if (segments && updateType.name === "$REMOVE") {
+						refuseRemoveUnderRuleAncestor(subKey, segments);
+					}
+
 					// The default and required checks apply to the attribute this path writes. For a
 					// nested path that is the nested attribute, not the top-level parent, which stays
 					// on the item. A nested path the schema does not describe has nothing to check.
@@ -1081,8 +1105,12 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				// `Key`, and DynamoDB rejects a SET on a key attribute. Its sources are immutable for the same
 				// reason, so an update to any of them, through any update type, is rejected.
 				if (details.attribute === this.getInternalProperties(internalProperties).getHashKey() || details.attribute === this.getInternalProperties(internalProperties).getRangeKey()) {
-					const referencedNameKeys = new Set(Object.values(returnObject.UpdateExpression).flat().join(", ").match(/#a\d+/gu) || []);
-					const updatedSources = details.type.typeSettings.attributes.filter((attribute) => referencedNameKeys.has(topLevelNameKeys.get(attribute)));
+					const expressionText = Object.values(returnObject.UpdateExpression).flat().join(", ");
+					const updatedSources = details.type.typeSettings.attributes.filter((attribute) => {
+						const nameKey = topLevelNameKeys.get(attribute);
+						// `\b` after the digits so that #a1 does not match inside #a10
+						return nameKey !== undefined && new RegExp(`${nameKey}\\b`, "u").test(expressionText);
+					});
 					if (updatedSources.length > 0) {
 						throw new CustomError.InvalidParameter(`You cannot update the combine attributes of ${details.attribute} because it is part of the key. Remove them from the update: ${updatedSources.join(", ")}.`);
 					}

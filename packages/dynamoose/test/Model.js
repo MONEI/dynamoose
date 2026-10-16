@@ -3295,6 +3295,50 @@ describe("Model", () => {
 					expect(updateItemParams).toBeUndefined();
 				});
 
+				it("Should throw error for a nested $REMOVE under a parent with declared children and its own validate", async () => {
+					// A removal is a partial write of the parent: its validate never sees the result, so it
+					// must be refused like a nested $SET. Without this, the parent's validate is skipped
+					// entirely by spelling the write as a removal.
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"required1": {"type": String, "required": true}, "admin": Boolean}, "validate": (val) => typeof val.required1 === "string" && val.admin !== true}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["parent.admin"]})).rejects.toThrow("parent.admin cannot be updated alone: parent has its own set or validate rule, so write the whole parent.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
+				it("Should throw error for a nested $SET to undefined under a parent with declared children and its own validate", async () => {
+					// The same removal spelled as a $SET to undefined must be refused the same way, or the
+					// refusal above is bypassed by writing it differently.
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"required1": {"type": String, "required": true}, "admin": Boolean}, "validate": (val) => typeof val.required1 === "string" && val.admin !== true}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$SET": {"parent.admin": undefined}})).rejects.toThrow("parent.admin cannot be updated alone: parent has its own set or validate rule, so write the whole parent.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
+				it("Should allow a nested $REMOVE under a multi-type parent with no set or validate rule", async () => {
+					// getAttributeSettingValue answers with one entry per definition for a multi-type
+					// attribute, and a plain truthiness test on that array refuses every such removal.
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": Number}}]});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["data.a"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0.#a1");
+				});
+
+				it("Should throw error for a $REMOVE inside a list element under a parent with its own validate", async () => {
+					// The ancestors of a path with an index are walked through the generic schema path
+					// (reps[0].name -> reps.0.name), so the rule on reps must still be found.
+					updateItemFunction = () => Promise.resolve({});
+					updateItemParams = undefined;
+					User = dynamoose.model("User", {"id": Number, "reps": {"type": Array, "schema": [{"type": Object, "schema": {"name": String, "email": String}}], "validate": (val) => Array.isArray(val)}});
+					new dynamoose.Table("User", [User]);
+					await expect(callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["reps[0].name"]})).rejects.toThrow("reps[0].name cannot be updated alone: reps has its own set or validate rule, so write the whole reps.");
+					expect(updateItemParams).toBeUndefined();
+				});
+
 				it("Should throw error for a nested $SET under a parent with declared children and its own set modifier", async () => {
 					updateItemFunction = () => Promise.resolve({});
 					User = dynamoose.model("User", {"id": Number, "parent": {"type": Object, "schema": {"n": Number, "flag": Boolean}, "set": (val) => ({...val, "flag": false})}});
