@@ -128,9 +128,29 @@ Bugs 1 and 2 matter only where caller input reaches an update key. Check the ser
 
 ## Submitted
 
-| # | Upstream PR | State |
-|---|---|---|
-| 15 | https://github.com/dynamoose/dynamoose/pull/1813 | Open. 16 of 17 checks pass (lint, test-types, CodeQL, `test` on Node 16-25). `CLAssistant` red, see below |
+All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Cross-fork stacked PRs are not possible: GitHub chains stacks through base branches, a base must exist in the target repository, and we have no push access to dynamoose/dynamoose. The 4 stacked PRs therefore target `main` and carry a `> Depends on #NNNN` line with a compare link to their own delta.
+
+| # | Branch | Upstream PR | Depends on |
+|---|---|---|---|
+| 15 | `fix-stream-options-undefined` | https://github.com/dynamoose/dynamoose/pull/1813 | - |
+| 1 | `fix-update-value-types` | https://github.com/dynamoose/dynamoose/pull/1814 | - |
+| 2 | `fix-nested-force-default` | https://github.com/dynamoose/dynamoose/pull/1815 | - |
+| 3 | `fix-combine-no-source` | https://github.com/dynamoose/dynamoose/pull/1816 | - |
+| 4 | `fix-combine-key` | https://github.com/dynamoose/dynamoose/pull/1817 | 3 (same lines) |
+| 8 | `types-export` | https://github.com/dynamoose/dynamoose/pull/1818 | - |
+| 9 | `perf-converter-deep-copy` | https://github.com/dynamoose/dynamoose/pull/1819 | - |
+| 10 | `perf-schema-lookup-cache` | https://github.com/dynamoose/dynamoose/pull/1820 | - |
+| 11 | `feat-read-strict` | https://github.com/dynamoose/dynamoose/pull/1821 | - |
+| 12 | `fix-save-return-conformed` | https://github.com/dynamoose/dynamoose/pull/1822 | - |
+| 13 | `test-block-http` | https://github.com/dynamoose/dynamoose/pull/1823 | - |
+| 5 | `feat-update-nested-paths` | https://github.com/dynamoose/dynamoose/pull/1824 | 1817 |
+| 6 | `test-update-integration` | https://github.com/dynamoose/dynamoose/pull/1825 | 1824 |
+| 7 | `perf-nested-update-batching` | https://github.com/dynamoose/dynamoose/pull/1826 | 1824 |
+| 14 | `perf-hot-paths` | https://github.com/dynamoose/dynamoose/pull/1827 | 1820 |
+
+### CodeQL on 10 and 14, fixed
+
+CodeQL raised 2 high-severity "insecure randomness" alerts on 1820, for `Math.random()` behind `userId` and `sessionId` in `benchmarks/schemas.js`. All 7 `Math.random()` uses are gone: the `schemas.js` fixture ids are a counter, and `externalOrderId` in `benchmarks/fixtures/order-schema.js` uses `crypto.randomInt`. The counter also removes a real benchmark defect, `multiType` flipping between a string and a number from run to run, which made the fixtures differ between the runs a benchmark compares. Folded into the existing benchmark commit on both branches, so neither PR gained a commit. Suite counts unchanged (2459 and 2463), benchmark smoke 14/14.
 
 ### Blocker: upstream's CLA bot cannot record a signature
 
