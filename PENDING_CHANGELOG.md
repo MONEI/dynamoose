@@ -8,7 +8,7 @@
 
 ### General
 
-- Faster reads and writes: `utils.object.entries` and `keys` track ancestors instead of walking each nested object's whole subtree for cycles, schema lookups skip the list-index regex for keys without an index, and `Item.attributesWithSchema` reuses a cached tree of the schema's attributes. `get` and `update` are about 5-35% faster than 4.2.6 on the benchmark schemas, also without the removed `Model.update` caches
+- Faster reads and writes: `utils.object.entries` and `keys` track ancestors instead of walking each nested object's whole subtree for cycles, schema lookups skip the list-index regex for keys without an index, and `Item.attributesWithSchema` reuses a cached tree of the schema's attributes. `update` is about 12-35% faster than 4.2.6 on the benchmark schemas, and `get` about 5-35% faster with `readStrict: true`, also without the removed `Model.update` caches. With `readStrict: false` (this fork's default) `get` is slower than 4.2.6 in spite of this work, because the type check below now runs where 4.2.6 skipped it: 2-10% on MONEI's schemas
 - Removed the `Model.update` caches (`attributeTypeCache`, `schemaAttributesCache`, `updateTypesMapCache`, `convertKeyToObjectCache`), `utils/LRUCache` and `Model.clearCache()`. The schema lookup cache covers them, and `attributeTypeCache` made the request for an undeclared `saveUnknown` attribute depend on the first update of the model
 - Improved performance by caching schema lookups per Schema: `Model.create`/`Item.save`, `Model.get` and `Model.update` are about 1.5 to 2.5 times as fast on large schemas
 - Improved `Model.update` performance for nested paths (`a.b`, `a[0].b`): the nested paths of one update are converted together instead of one full schema pass per path, about 10 to 30 times as fast as 4.2.4
@@ -16,7 +16,7 @@
 
 ### Bug Fixes
 
-- Fixed `readStrict: false` reads returning `ANY` lists as empty, dropping the fields of range-key model references and throwing on a multi-type attribute with a `get` modifier. Reads now run the type check and return a mismatched value as stored (same code as upstream's `readStrict`); the fork's default stays `false`
+- Fixed `readStrict: false` reads returning a stored value that does not match its declared type as an empty value: an `ANY` list, and in fact any map, list or set stored where the schema declares another type, came back as `{}` or `[]`. It also dropped the fields of range-key model references and threw on a multi-type attribute with a `get` modifier. Reads now run the type check and return a mismatched value as stored (same code as upstream's `readStrict`); the fork's default stays `false`
 - Fixed `save`/`Model.create` writing `get`-modified values back onto the item (a second save applied `set` twice) and marking the item stored before `putItem`, also for `{"return": "request"}` and when `putItem` fails. `save` now resolves with a new item in the form `Model.get` returns, and the saved item keeps its values
 - Fixed the primitive fast path of `convertToAttr` differing from the AWS SDK: `NaN`, `Infinity`, numbers outside the safe integer range and `undefined` now go to the SDK (which throws), and converter options are respected
 - Fixed `Model.update` being impossible to run against a schema whose hash or range key is a `Combine` attribute
@@ -39,3 +39,4 @@
 - Fixed `Model.update` skipping the required check of a nested path written in another spelling (`reps.[0].name`, `reps[0]name`): every check now uses the parsed path, and a path with a name right after a list index or without a leading attribute name throws
 - Fixed `Model.update` skipping `required` on the children of an object written to a nested path (`{"$SET": {"a.b": {"c": "1"}}}` with `a.b.d` required)
 - Fixed `Model.update` refusing `$REMOVE` of a key inside a list element (`reps[0].email`), which DynamoDB accepts
+- Fixed `Model.update` dropping a `$REMOVE` of an attribute the schema does not declare (`{"$REMOVE": ["legacyField"]}`), a regression of 4.2.1: the attribute is now removed, as it is in upstream and as a declared attribute always was. An update whose only change was such a path sent an empty expression, which DynamoDB rejects with `ExpressionAttributeNames must not be empty` on a schema without timestamps
