@@ -824,18 +824,22 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 			return result;
 		};
 		const convertNestedValue = async (path: string, value: ValueType, settings: ObjectType): Promise<any> => (await convertNestedValues([[path, value]], settings)).get(path);
+		// Whether an attribute has one of these rules of its own. `returnFunction` so that the rule is
+		// read, never run: calling it here would invoke a user function with no value. A multi-type
+		// attribute answers with one entry per definition.
+		const attributeHasRule = (attribute: string, rules: string[]): boolean => rules.some((rule) => {
+			try {
+				const value = schema.getAttributeSettingValue(rule, attribute, {"returnFunction": true});
+				return Array.isArray(value) ? value.some(Boolean) : Boolean(value);
+			} catch (e) {
+				return false;
+			}
+		});
 		// Whether an ancestor of a nested path has a set or validate rule these settings apply
 		const ancestorHasRule = (segments: PathSegment[], settings: ObjectType): boolean => {
 			const rules = [...settings.validate ? ["validate"] : [], ...settings.modifiers ?? []];
 			const parts = segments.map((segment) => segment.type === "index" ? 0 : segment.value);
-			return parts.slice(0, -1).some((part, i) => rules.some((rule) => {
-				try {
-					const value = schema.getAttributeSettingValue(rule, parts.slice(0, i + 1).join("."), {"returnFunction": true});
-					return Array.isArray(value) ? value.some(Boolean) : Boolean(value);
-				} catch (e) {
-					return false;
-				}
-			}));
+			return parts.slice(0, -1).some((part, i) => attributeHasRule(parts.slice(0, i + 1).join("."), rules));
 		};
 		// A parent that has its own `set` or `validate` rule cannot vet a partial write of its children,
 		// so objectFromSchema refuses one (`refuseRuleOnPartialObject`). Removing a child is a partial
@@ -848,10 +852,7 @@ export class Model<T extends ItemCarrier = AnyItem> extends InternalPropertiesCl
 				if (!attributes.includes(ancestor)) {
 					continue;
 				}
-				// `returnFunction` so that the rule is read, never run: calling it here would invoke a
-				// user function with no value.
-				const hasOwnRule = ["set", "validate"].some((setting) => Boolean(schema.getAttributeSettingValue(setting as any, ancestor, {"returnFunction": true})));
-				if (hasOwnRule && attributes.some((attribute) => attribute.startsWith(`${ancestor}.`))) {
+				if (attributeHasRule(ancestor, ["set", "validate"]) && attributes.some((attribute) => attribute.startsWith(`${ancestor}.`))) {
 					throw new CustomError.InvalidParameter(`${path} cannot be updated alone: ${ancestor} has its own set or validate rule, so write the whole ${ancestor}.`);
 				}
 			}

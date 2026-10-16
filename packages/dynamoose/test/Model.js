@@ -3318,6 +3318,16 @@ describe("Model", () => {
 					expect(updateItemParams).toBeUndefined();
 				});
 
+				it("Should allow a nested $REMOVE under a multi-type parent with no set or validate rule", async () => {
+					// getAttributeSettingValue answers with one entry per definition for a multi-type
+					// attribute, and a plain truthiness test on that array refuses every such removal.
+					updateItemFunction = () => Promise.resolve({});
+					User = dynamoose.model("User", {"id": Number, "data": [{"type": Object, "schema": {"a": String}}, {"type": Object, "schema": {"b": Number}}]});
+					new dynamoose.Table("User", [User]);
+					await callType.func(User).bind(User)({"id": 1}, {"$REMOVE": ["data.a"]});
+					expect(updateItemParams.UpdateExpression).toEqual("REMOVE #a0.#a1");
+				});
+
 				it("Should throw error for a $REMOVE inside a list element under a parent with its own validate", async () => {
 					// The ancestors of a path with an index are walked through the generic schema path
 					// (reps[0].name -> reps.0.name), so the rule on reps must still be found.
