@@ -16,6 +16,7 @@
 
 ### Bug Fixes
 
+- Fixed a nested `$REMOVE` skipping the check that refuses a partial write under a parent with its own `set` or `validate` rule and declared children. `{"$REMOVE": ["a.b"]}` and `{"$SET": {"a.b": undefined}}` both went through with the parent's rule never applied, while `{"$SET": {"a.b": value}}` was refused. Both spellings are now refused with the same error
 - Fixed `readStrict: false` reads returning `ANY` lists as empty, dropping the fields of range-key model references and throwing on a multi-type attribute with a `get` modifier. Reads now run the type check and return a mismatched value as stored (same code as upstream's `readStrict`); the fork's default stays `false`
 - Fixed `save`/`Model.create` writing `get`-modified values back onto the item (a second save applied `set` twice) and marking the item stored before `putItem`, also for `{"return": "request"}` and when `putItem` fails. `save` now resolves with a new item in the form `Model.get` returns, and the saved item keeps its values
 - Fixed the primitive fast path of `convertToAttr` differing from the AWS SDK: `NaN`, `Infinity`, numbers outside the safe integer range and `undefined` now go to the SDK (which throws), and converter options are respected
