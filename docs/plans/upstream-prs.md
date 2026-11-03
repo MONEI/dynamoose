@@ -17,8 +17,8 @@ All suite counts are for the full unit suite (`npx jest` in `packages/dynamoose`
 | # | Branch | Title | Depends on | Tests | Compare |
 |---|---|---|---|---|---|
 | 1 | `upstream-pr/fix-update-value-types` | Fixing Model.update typing a value by another attribute after a $REMOVE | - | 1 new test, fails without the fix. 2390 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-update-value-types?expand=1) |
-| 2 | `upstream-pr/fix-nested-force-default` | Fixing Model.update writing nested forceDefault attributes as top-level attributes | - | 2 new tests, both fail without the fix. 2392 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-nested-force-default?expand=1) |
-| 3 | `upstream-pr/fix-combine-no-source` | Fixing Model.update requiring combine attributes when none of them are updated | - (same lines as 4) | 1 new test, fails without the fix. 2390 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-combine-no-source?expand=1) |
+| 2 | `upstream-pr/fix-nested-force-default` | Fixing Model.update writing nested forceDefault attributes as top-level attributes | - | 4 new tests, all fail without the fix. 2396 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-nested-force-default?expand=1) |
+| 3 | `upstream-pr/fix-combine-no-source` | Fixing Model.update requiring combine attributes when none of them are updated | - (same lines as 4) | 4 new tests, 3 fail without the fix (the `$ADD` to a source passes on both). 2395 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-combine-no-source?expand=1) |
 | 4 | `upstream-pr/fix-combine-key` | Fixing Model.update on schemas whose hash or range key is a Combine attribute | - (same lines as 3) | 4 new tests, all fail without the fix. 2396 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-combine-key?expand=1) |
 | 5 | `upstream-pr/feat-update-nested-paths` | Adding nested path support to Model.update | 1-4 (its first 4 commits) | 79 new tests, 75 fail without the change. 2562 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/feat-update-nested-paths?expand=1) |
 | 6 | `upstream-pr/test-update-integration` | Adding Model.update tests against DynamoDB Local | 5 | 28 DynamoDB Local cases: 23 fail on main's library, 28 pass. Unit 2562 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/test-update-integration?expand=1) |
@@ -152,7 +152,8 @@ All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Every branch st
 
 - `upstream/main` is still 12d22a37. Each PR head is the fork branch, and GitHub reports all 15 as mergeable.
 - No maintainer has commented on, reviewed or merged any of the 15. The CLA report on 1813 has no answer. Upstream merged nothing after 2026-10-11.
-- KennethWKZ, an upstream contributor, suggested tests on 1815 and 1816 (2026-10-29). His claims are correct: on `main` his tests fail, except the 1816 `$ADD`-to-a-source test, which passes on both. On 1815 and 1816 all of them pass.
+- KennethWKZ, an upstream contributor, suggested tests on 1815 and 1816 (2026-10-29). His claims are correct: on `main` his tests fail, except the 1816 `$ADD`-to-a-source test, which passes on both. On 1815 and 1816 all of them pass. All 5 are added: 2 on branch 2 (7a6ce39a), 3 on branch 3 (5ffeffcf). Branch 5 carries the older copies of 2 and 3 without them. The rebase of 5 after 2 and 3 merge takes them in.
+- `Model model.get()` and `model.batchGet()` "Should wait for model to be ready prior to running DynamoDB API call" fail now and then in a full local run (100 ms `waitForActive` timeout). This is the same on branch 2 without the new tests, so it is upstream's flake, not ours.
 - His open PRs conflict with ours in `lib/` (`git merge-tree` against 12d22a37, `PENDING_CHANGELOG.md` excluded):
 
 | His PR | Conflicts with |
