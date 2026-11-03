@@ -6,7 +6,7 @@ Fork `origin/main` a9c3aef8 (4.3.0) against `upstream/main` 12d22a37. The fork i
 
 `upstream/main` has not moved since the branches were written, so no branch needed a rebase. Every branch still has `upstream/main` as its merge base.
 
-All branches are on `origin` (MONEI/dynamoose) only. No PR, issue or comment exists on dynamoose/dynamoose. Upstream AGENTS.md requires that a human approves each submission. You post the CLA dedication comment yourself on the first PR.
+All branches are on `origin` (MONEI/dynamoose). All 15 are open as PRs on dynamoose/dynamoose, see [Submitted](#submitted). Upstream AGENTS.md requires that a human approves each submission, PR edit and comment. The CLA dedication comment is posted on 1813.
 
 Each PR body is in [upstream-prs/](upstream-prs/), as `<topic>.md`. Line 1 is the title. The body follows upstream's PR template and ends with the AI disclosure. The disclosure says that the human reviewed the changes and ran the tests. That statement is true only after you do so. Leave the "searched PRs" and "license" boxes for yourself.
 
@@ -20,9 +20,9 @@ All suite counts are for the full unit suite (`npx jest` in `packages/dynamoose`
 | 2 | `upstream-pr/fix-nested-force-default` | Fixing Model.update writing nested forceDefault attributes as top-level attributes | - | 2 new tests, both fail without the fix. 2392 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-nested-force-default?expand=1) |
 | 3 | `upstream-pr/fix-combine-no-source` | Fixing Model.update requiring combine attributes when none of them are updated | - (same lines as 4) | 1 new test, fails without the fix. 2390 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-combine-no-source?expand=1) |
 | 4 | `upstream-pr/fix-combine-key` | Fixing Model.update on schemas whose hash or range key is a Combine attribute | - (same lines as 3) | 4 new tests, all fail without the fix. 2396 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/fix-combine-key?expand=1) |
-| 5 | `upstream-pr/feat-update-nested-paths` | Adding nested path support to Model.update | 1-4 (its first 4 commits) | 75 new tests, 71 fail without the change. 2554 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/feat-update-nested-paths?expand=1) |
-| 6 | `upstream-pr/test-update-integration` | Adding Model.update tests against DynamoDB Local | 5 | 28 DynamoDB Local cases: 23 fail on main's library, 28 pass. Unit 2554 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/test-update-integration?expand=1) |
-| 7 | `upstream-pr/perf-nested-update-batching` | Converting the nested paths of one Model.update together | 5 | N/A, performance only. 2554 passed. 10 nested paths: 46-56 ms to 11.5-12.7 ms per update | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-nested-update-batching?expand=1) |
+| 5 | `upstream-pr/feat-update-nested-paths` | Adding nested path support to Model.update | 1-4 (its first 4 commits) | 79 new tests, 75 fail without the change. 2562 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/feat-update-nested-paths?expand=1) |
+| 6 | `upstream-pr/test-update-integration` | Adding Model.update tests against DynamoDB Local | 5 | 28 DynamoDB Local cases: 23 fail on main's library, 28 pass. Unit 2562 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/test-update-integration?expand=1) |
+| 7 | `upstream-pr/perf-nested-update-batching` | Converting the nested paths of one Model.update together | 5 | N/A, performance only. 2562 passed. 10 nested paths: 46-56 ms to 11.5-12.7 ms per update | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-nested-update-batching?expand=1) |
 | 8 | `upstream-pr/types-export` | Exporting public option and schema types and allowing mixed update operators in UpdatePartial | - | Type tests fail to compile without the change. 2388 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/types-export?expand=1) |
 | 9 | `upstream-pr/perf-converter-deep-copy` | Speeding up primitive attribute conversion and deep_copy | - | N/A, performance only. 26 new tests compare the fast path with the SDK. 2414 passed | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-converter-deep-copy?expand=1) |
 | 10 | `upstream-pr/perf-schema-lookup-cache` | Adding a per-schema cache for attribute lookups | - | 2 of 21 SchemaCache tests fail without the cache. 50 equivalence cases against published 4.2.0 pass. 2459 passed. Benchmark: create +46-97%, get +53-181%, update +139-153% | [compare](https://github.com/dynamoose/dynamoose/compare/main...MONEI:dynamoose:upstream-pr/perf-schema-lookup-cache?expand=1) |
@@ -36,7 +36,7 @@ All suite counts are for the full unit suite (`npx jest` in `packages/dynamoose`
 
 Run against `upstream/main` 12d22a37 in a clean worktree, one branch at a time, with `npm ci` whenever the lockfile changed and `npm run build` before every run.
 
-- All 15 branches: `npm run build`, `npm run lint`, `npm run test:types` and `npx jest` pass. Every suite count in the table above was reproduced exactly.
+- All 15 branches: `npm run build`, `npm run lint`, `npm run test:types` and `npx jest` pass. Every suite count in the table above was reproduced exactly. The later fixes on 5, 6 and 7 (see below) added 4 tests; their counts are from upstream CI.
 - `upstream-pr/test-update-integration`: the 28 DynamoDB Local cases pass against `amazon/dynamodb-local` on port 8000.
 - `upstream-pr/perf-hot-paths`: `npm run benchmark:smoke` passes, 14 tests.
 - No branch adds a fork-only line. No branch touches the package name, `publishConfig`, `private`, `prepack`, `packageManager`, `NPM_TOKEN`, `.npmrc`, `CLAUDE.md`, `.mcp.json` or `docs/plans/`. The only `dynamoose-baseline` references are in 10 and 14, where the alias is the published `npm:dynamoose@4.2.0`, not the scoped fork package.
@@ -148,6 +148,22 @@ All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Every branch st
 | 7 | `perf-nested-update-batching` | https://github.com/dynamoose/dynamoose/pull/1826 | 1824 |
 | 14 | `perf-hot-paths` | https://github.com/dynamoose/dynamoose/pull/1827 | 1820 |
 
+### Status 2026-11-03
+
+- `upstream/main` is still 12d22a37. Each PR head is the fork branch, and GitHub reports all 15 as mergeable.
+- No maintainer has commented on, reviewed or merged any of the 15. The CLA report on 1813 has no answer. Upstream merged nothing after 2026-10-11.
+- KennethWKZ, an upstream contributor, suggested tests on 1815 and 1816 (2026-10-29). His claims are correct: on `main` his tests fail, except the 1816 `$ADD`-to-a-source test, which passes on both. On 1815 and 1816 all of them pass.
+- His open PRs conflict with ours in `lib/` (`git merge-tree` against 12d22a37, `PENDING_CHANGELOG.md` excluded):
+
+| His PR | Conflicts with |
+|---|---|
+| https://github.com/dynamoose/dynamoose/pull/1783 (nested/partial `Model.update`) | 1814, 1818 (`Model/index.ts`); 1821, 1822 (`Item.ts`); 1824, 1825, 1826 (`Model/index.ts`, `guide/Model.md`) |
+| https://github.com/dynamoose/dynamoose/pull/1830 | 1824, 1825, 1826 (`Model/index.ts`, `guide/Model.md`) |
+| https://github.com/dynamoose/dynamoose/pull/1831 | 1824, 1825, 1826 (`Model/index.ts`) |
+| https://github.com/dynamoose/dynamoose/pull/1832 (combine placeholders) | 1824, 1825, 1826 (`Model/index.ts`) |
+
+1783 overlaps 5 in scope too: both change nested `Model.update`. The maintainer will likely merge one of the two first. The other one then needs a rebase.
+
 ### Validation bypass found and fixed in 5 (2026-10-16)
 
 A nested `$REMOVE` skipped the partial-object guard that a nested `$SET` enforces. `refuseRuleOnPartialObject` refuses writing `a.b` when `a` has its own `set` or `validate` rule and declared children, because the rule cannot vet a partial object. A removal is a partial write too, but it carries no value, so it never reached that check:
@@ -174,7 +190,7 @@ The first version of the guard tested `Boolean(schema.getAttributeSettingValue(s
 // {"$REMOVE": ["data.a"]} -> refused, although neither definition has set or validate
 ```
 
-`Model/index.ts` already had `ancestorHasRule`, which handles the array correctly, and the guard should have reused it. Both now share `attributeHasRule`. One regression test covers the multi-type case. Fixed on 5, 6 and 7, and in the fork.
+`Model/index.ts` already had `ancestorHasRule`, which handles the array correctly, and the guard should have reused it. Both now share `attributeHasRule`. One regression test covers the multi-type case. Suite 2560 -> 2562. Fixed on 5, 6 and 7, and in the fork.
 
 Both review bots (CodeRabbit and the Codex reviewer) found this on the fork PR; the test suite did not. Worth remembering for any other code that reads a schema setting: `getAttributeSettingValue` **runs** the rule unless `returnFunction` is set, and answers with an array for a multi-type attribute.
 
@@ -195,10 +211,10 @@ CodeQL raised 2 high-severity "insecure randomness" alerts on 1820, for `Math.ra
 
 ### Coverage (2026-10-16)
 
-Upstream keeps ~100% line coverage, so Coveralls fails on any drop. Fixed on 1, 9, 10 and 14; 5, 6 and 7 keep one uncovered line.
+Upstream keeps ~100% line coverage, so Coveralls fails on any drop. Coveralls counts branches too. It is not a required check: upstream's ruleset requires only `lint` and `test-types`. Fixed on 1 and 9. 10 and 14 are back to 100% lines but still fail, -0.08%: 3 uncovered branches each (1507 of 1510, 1534 of 1537). 5 and 6 keep one uncovered line and 3 uncovered branches (-0.1%), 7 one line and 6 branches (-0.2%). Coveralls builds of 2026-10-16.
 
 - **9**: the new fast path (`typeof obj !== "object"`) also returns for a function, which left upstream's `if (obj instanceof Function)` block unreachable. Removed it, `deep_copy.js` back to 100%.
-- **10 and 14**: `test/Equivalence.js` loads `equivalence/` and `benchmarks/`, so jest instrumented the harness and the corpus as library code (-1.1%). Added `coveragePathIgnorePatterns` for both. Back to 100% lines.
+- **10 and 14**: `test/Equivalence.js` loads `equivalence/` and `benchmarks/`, so jest instrumented the harness and the corpus as library code (-1.1%). Added `coveragePathIgnorePatterns` for both. Back to 100% lines; the 3 uncovered branches are not yet found.
 - **4**: the `.match(...) || []` fallback cannot be reached. Rewritten to test each name key against the expression text, which has no fallback. Exactly the upstream baseline (99.81 / 98.88 / 100 / 100). The same rewrite is in 5, which carries this fix.
 - **5, 6, 7**: one uncovered line remains, the `return undefined` of `multiTypeAncestor`. It is only called for a path the schema declares, and every such path in the tests has a multi-type ancestor; no test reaches the default. Left as it is rather than restructured to hide it.
 
