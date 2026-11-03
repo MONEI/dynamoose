@@ -212,10 +212,10 @@ CodeQL raised 2 high-severity "insecure randomness" alerts on 1820, for `Math.ra
 
 ### Coverage (2026-10-16)
 
-Upstream keeps ~100% line coverage, so Coveralls fails on any drop. Coveralls counts branches too. It is not a required check: upstream's ruleset requires only `lint` and `test-types`. Fixed on 1 and 9. 10 and 14 are back to 100% lines but still fail, -0.08%: 3 uncovered branches each (1507 of 1510, 1534 of 1537). 5 and 6 keep one uncovered line and 3 uncovered branches (-0.1%), 7 one line and 6 branches (-0.2%). Coveralls builds of 2026-10-16.
+Upstream keeps ~100% line coverage, so Coveralls fails on any drop. Coveralls counts branches too. It is not a required check: upstream's ruleset requires only `lint` and `test-types`. Fixed on 1, 9, 10 and 14. 5 and 6 keep one uncovered line and 3 uncovered branches (-0.1%), 7 one line and 6 branches (-0.2%). Coveralls builds of 2026-10-16.
 
 - **9**: the new fast path (`typeof obj !== "object"`) also returns for a function, which left upstream's `if (obj instanceof Function)` block unreachable. Removed it, `deep_copy.js` back to 100%.
-- **10 and 14**: `test/Equivalence.js` loads `equivalence/` and `benchmarks/`, so jest instrumented the harness and the corpus as library code (-1.1%). Added `coveragePathIgnorePatterns` for both. Back to 100% lines; the 3 uncovered branches are not yet found.
+- **10 and 14**: `test/Equivalence.js` loads `equivalence/` and `benchmarks/`, so jest instrumented the harness and the corpus as library code (-1.1%). Added `coveragePathIgnorePatterns` for both. Back to 100% lines. That left 3 uncovered branches in the cache (-0.08%), fixed on 2026-11-03 by c63c7a16 on 10, cherry-picked to 14 as 60faaad9: `hasModelSetting` lost an unreachable `detail?.` and its `typeof` object-or-function test became `Object(typeSettings) === typeSettings`, and the non-string key equivalence case also calls the lookups without settings. In a local `npm test`, both have 100% lines and 18 uncovered branches, against 20 on `upstream/main`.
 - **4**: the `.match(...) || []` fallback cannot be reached. Rewritten to test each name key against the expression text, which has no fallback. Exactly the upstream baseline (99.81 / 98.88 / 100 / 100). The same rewrite is in 5, which carries this fix.
 - **5, 6, 7**: one uncovered line remains, the `return undefined` of `multiTypeAncestor`. It is only called for a path the schema declares, and every such path in the tests has a multi-type ancestor; no test reaches the default. Left as it is rather than restructured to hide it.
 
