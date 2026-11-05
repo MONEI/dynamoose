@@ -1,5 +1,6 @@
 export default function deep_copy<T> (obj: T, refs = new Set()): T {
-	// Fast path for null, undefined, primitives
+	// Fast path for null, undefined and every non-object. A function lands here too (`typeof` is
+	// "function"), and is returned as it is, as before: a unit test passes one in.
 	if (obj === null || obj === undefined || typeof obj !== "object") {
 		return obj;
 	}
@@ -34,11 +35,6 @@ export default function deep_copy<T> (obj: T, refs = new Set()): T {
 	if (obj instanceof Map) {
 		copy = new Map(obj);
 		return copy;
-	}
-
-	if (obj instanceof Function) {
-		// This is not technically correct, but required for unit test purposes. We currently have a unit test that passes in a function where it shouldn't. So in order to handle this case we need to do something here. Ideally we would clone the function somehow to create a copy of it. But that is lower priority for now.
-		return obj;
 	}
 
 	// Handle Array
