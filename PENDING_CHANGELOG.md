@@ -2,6 +2,10 @@
 
 ---
 
+### Maintenance
+
+- Store CLA signatures on a dedicated branch so protected main does not block contributors from signing
+
 ### Features
 
 - Added support for enabling and configuring DynamoDB Streams through Table options
@@ -41,3 +45,5 @@
 - Fixed `Model.update` skipping `required` on the children of an object written to a nested path (`{"$SET": {"a.b": {"c": "1"}}}` with `a.b.d` required)
 - Fixed `Model.update` refusing `$REMOVE` of a key inside a list element (`reps[0].email`), which DynamoDB accepts
 - Fixed `Model.update` dropping a `$REMOVE` of an attribute the schema does not declare (`{"$REMOVE": ["legacyField"]}`), a regression of 4.2.1: the attribute is now removed, as it is in upstream and as a declared attribute always was. An update whose only change was such a path sent an empty expression, which DynamoDB rejects with `ExpressionAttributeNames must not be empty` on a schema without timestamps
+- Fixed `Model.update` and `Model.transaction.update` not writing a `Combine` attribute when the model also has a `forceDefault` attribute. Both were given the same placeholder (e.g. `#a2`), so the request set the default value twice and left the combine attribute out
+- Fixed `Model.update` and `Model.transaction.update` counting a combined attribute changed with `$ADD` or `$DELETE` as set when the update also set an attribute whose placeholder starts with its placeholder (`#a1` and `#a10`). The combine value was built from the amount added instead of throwing `You must update all or none of the combine attributes`
