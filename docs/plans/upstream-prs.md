@@ -1,10 +1,10 @@
 # Upstream PRs from the fork
 
-Status 2026-10-16: every branch re-verified against `upstream/main` 12d22a37. Goal: send every fork change that upstream can use to dynamoose/dynamoose, so that later syncs from upstream are cheap.
+Status 2026-11-05: every branch has `upstream/main` 32cb0335 merged in, see [Status 2026-11-05](#status-2026-11-05). Goal: send every fork change that upstream can use to dynamoose/dynamoose, so that later syncs from upstream are cheap.
 
-Fork `origin/main` a9c3aef8 (4.3.0) against `upstream/main` 12d22a37. The fork is synced: their merge base is upstream/main.
+Fork `origin/main` (4.3.1) is synced to `upstream/main` 12d22a37. https://github.com/MONEI/dynamoose/pull/32 merges 32cb0335 into the fork and releases 4.3.2.
 
-`upstream/main` has not moved since the branches were written, so no branch needed a rebase. Every branch still has `upstream/main` as its merge base.
+Upstream moved on 2026-11-04 (1832, 1833, 1834). The branches took it with merge commits, not rebases.
 
 All branches are on `origin` (MONEI/dynamoose). All 15 are open as PRs on dynamoose/dynamoose, see [Submitted](#submitted). Upstream AGENTS.md requires that a human approves each submission, PR edit and comment. The CLA dedication comment is posted on 1813.
 
@@ -128,7 +128,7 @@ Bugs 1 and 2, and the nested-removal bypass below, matter only where caller inpu
 
 ## Submitted
 
-All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Every branch still has `upstream/main` 12d22a37 as its merge base; upstream has not moved, so none needs a rebase. Tests pass on all 15. The only red checks are `CLAssistant` on every one (upstream's bot cannot write its signature file, see below) and `coverage/coveralls` on 10, 14, 5, 6 and 7, between -0.08% and -0.2%. Cross-fork stacked PRs are not possible: GitHub chains stacks through base branches, a base must exist in the target repository, and we have no push access to dynamoose/dynamoose. The 4 stacked PRs therefore target `main` and carry a `> Depends on #NNNN` line with a compare link to their own delta.
+All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. On 2026-11-05 every check is green on all 15, `CLAssistant` and `coverage/coveralls` (100.0%) included, and GitHub reports all 15 as mergeable. Cross-fork stacked PRs are not possible: GitHub chains stacks through base branches, a base must exist in the target repository, and we have no push access to dynamoose/dynamoose. The 4 stacked PRs therefore target `main` and carry a `> Depends on #NNNN` line with a compare link to their own delta.
 
 | # | Branch | Upstream PR | Depends on |
 |---|---|---|---|
@@ -148,9 +148,20 @@ All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Every branch st
 | 7 | `perf-nested-update-batching` | https://github.com/dynamoose/dynamoose/pull/1826 | 1824 |
 | 14 | `perf-hot-paths` | https://github.com/dynamoose/dynamoose/pull/1827 | 1820 |
 
+### Status 2026-11-05
+
+- Upstream merged https://github.com/dynamoose/dynamoose/pull/1832 (KennethWKZ, combine placeholders), https://github.com/dynamoose/dynamoose/pull/1833 (CLA signatures on a `cla-signatures` branch) and https://github.com/dynamoose/dynamoose/pull/1834 (docs dependencies) on 2026-11-04. `upstream/main` is 32cb0335.
+- Every branch has 32cb0335 merged in, with a merge commit (no rebase, no force push). 1813, 1820, 1821 and 1827 took it through GitHub's "Update branch", and 1816 too after a merge of 938d8629. The others conflicted:
+  - `PENDING_CHANGELOG.md` on 1814-1819, 1822-1826: both sides kept.
+  - The combine block of `Model/index.ts` on 1824, 1825, 1826: the branch's `topLevelNameKeys` lookup kept, 1832's `\b` placeholder test and numbering from `index` taken. The branch had the same `#a1`-inside-`#a10` and `forceDefault` placeholder bugs that 1832 fixed. The fork has the same resolution in https://github.com/MONEI/dynamoose/pull/32.
+- CLA: 1833 fixed the blocker below. After a dedication or `recheck` comment, `CLAssistant` passes on all 15.
+- Coverage: 100.0% on all 15, see [Coverage](#coverage-2026-10-16).
+- No maintainer has commented on, reviewed or merged any of the 15.
+- More of upstream's timer tests fail now and then, on one Node version per run: "Timeout › Should resolve in x milliseconds", "scan.all › Should handle delay correctly on scan.exec", "Time To Live › … TTL is disabling", "timestamps with updateAt with custom parameter names". No branch touches them, and a rerun passes. Without admin rights on upstream, an empty commit starts CI again.
+
 ### Status 2026-11-03
 
-- `upstream/main` is still 12d22a37. Each PR head is the fork branch, and GitHub reports all 15 as mergeable.
+- `upstream/main` was still 12d22a37. Each PR head is the fork branch, and GitHub reports all 15 as mergeable.
 - No maintainer has commented on, reviewed or merged any of the 15. The CLA report on 1813 has no answer. Upstream merged nothing after 2026-10-11.
 - KennethWKZ, an upstream contributor, suggested tests on 1815 and 1816 (2026-10-29). His claims are correct: on `main` his tests fail, except the 1816 `$ADD`-to-a-source test, which passes on both. On 1815 and 1816 all of them pass. All 5 are added: 2 on branch 2 (7a6ce39a), 3 on branch 3 (5ffeffcf). Branch 5 carries the older copies of 2 and 3 without them. The rebase of 5 after 2 and 3 merge takes them in.
 - `Model model.get()` and `model.batchGet()` "Should wait for model to be ready prior to running DynamoDB API call" fail now and then in a full local run (100 ms `waitForActive` timeout). This is the same on branch 2 without the new tests, so it is upstream's flake, not ours.
@@ -161,7 +172,7 @@ All 15 are open on dynamoose/dynamoose, 2026-10-16, base `main`. Every branch st
 | https://github.com/dynamoose/dynamoose/pull/1783 (nested/partial `Model.update`) | 1814, 1818 (`Model/index.ts`); 1821, 1822 (`Item.ts`); 1824, 1825, 1826 (`Model/index.ts`, `guide/Model.md`) |
 | https://github.com/dynamoose/dynamoose/pull/1830 | 1824, 1825, 1826 (`Model/index.ts`, `guide/Model.md`) |
 | https://github.com/dynamoose/dynamoose/pull/1831 | 1824, 1825, 1826 (`Model/index.ts`) |
-| https://github.com/dynamoose/dynamoose/pull/1832 (combine placeholders) | 1824, 1825, 1826 (`Model/index.ts`) |
+| https://github.com/dynamoose/dynamoose/pull/1832 (combine placeholders, merged 2026-11-04) | 1824, 1825, 1826 (`Model/index.ts`), resolved 2026-11-05 |
 
 1783 overlaps 5 in scope too: both change nested `Model.update`. The maintainer will likely merge one of the two first. The other one then needs a rebase.
 
@@ -212,14 +223,21 @@ CodeQL raised 2 high-severity "insecure randomness" alerts on 1820, for `Math.ra
 
 ### Coverage (2026-10-16)
 
-Upstream keeps ~100% line coverage, so Coveralls fails on any drop. Coveralls counts branches too. It is not a required check: upstream's ruleset requires only `lint` and `test-types`. Fixed on 1, 9, 10 and 14. 5 and 6 keep one uncovered line and 3 uncovered branches (-0.1%), 7 one line and 6 branches (-0.2%). Coveralls builds of 2026-10-16.
+Upstream keeps 100% coverage, so Coveralls fails on any drop. It is not a required check: upstream's ruleset requires only `lint` and `test-types`. All 15 are at 100.0% since 2026-11-05.
+
+Coveralls counts lines and branches together: (covered lines + covered branches) / (lines + branches) of `coverage/lcov.info`. A local `npm test` in `packages/dynamoose`, after `tsc --sourceMap`, writes the same file, so the `DA:` and `BRDA:` entries with 0 hits are the gaps. 1824 had 2532/2532 lines and 1567/1570 branches, 99.927%, the number Coveralls reported.
 
 - **9**: the new fast path (`typeof obj !== "object"`) also returns for a function, which left upstream's `if (obj instanceof Function)` block unreachable. Removed it, `deep_copy.js` back to 100%.
 - **10 and 14**: `test/Equivalence.js` loads `equivalence/` and `benchmarks/`, so jest instrumented the harness and the corpus as library code (-1.1%). Added `coveragePathIgnorePatterns` for both. Back to 100% lines. That left 3 uncovered branches in the cache (-0.08%), fixed on 2026-11-03 by c63c7a16 on 10, cherry-picked to 14 as 60faaad9: `hasModelSetting` lost an unreachable `detail?.` and its `typeof` object-or-function test became `Object(typeSettings) === typeSettings`, and the non-string key equivalence case also calls the lookups without settings. In a local `npm test`, both have 100% lines and 18 uncovered branches, against 20 on `upstream/main`.
 - **4**: the `.match(...) || []` fallback cannot be reached. Rewritten to test each name key against the expression text, which has no fallback. Exactly the upstream baseline (99.81 / 98.88 / 100 / 100). The same rewrite is in 5, which carries this fix.
-- **5, 6, 7**: one uncovered line remains, the `return undefined` of `multiTypeAncestor`. It is only called for a path the schema declares, and every such path in the tests has a multi-type ancestor; no test reaches the default. Left as it is rather than restructured to hide it.
+- **5, 6, 7**, fixed 2026-11-05 (5: 19a84171, 0aa1e49e; 6: 0c90b159, cc7ae23c, the same changes; 7: 3069ee21, fc407f4f):
+  - A test for a `set` modifier that returns `undefined` inside a list element (`reps[0].name`). The path is removed, as a top-level attribute is. It reaches the `return undefined` of `multiTypeAncestor` and its list-index branch.
+  - `segments[0]?.type` and `term.match(/^#a\d+/u)?.[0]` lost their optional chains. A nested path that passes the empty-component check always parses to at least one segment, and every update term starts with `#a`.
+  - 7 only: `ancestorHasRule` runs only for paths without a list index, so it no longer maps an index. Two more tests: a path under ancestors the schema does not declare (`meta.a.b.c`, the `catch` in `ancestorHasRule`), and a nested path in the array form `{"$SET": ["meta.a"]}`. The batch does not collect the array form, so the loop converts it on its own. Without that fallback the path is removed instead of written; the test fails then.
 
-### Blocker: upstream's CLA bot cannot record a signature
+### Blocker, fixed 2026-11-04: upstream's CLA bot could not record a signature
+
+Fixed by https://github.com/dynamoose/dynamoose/pull/1833: the bot now writes signatures to a `cla-signatures` branch. `CLAssistant` passes on all 15. History:
 
 The dedication comment was posted on 1813, but https://github.com/dynamoose/dynamoose/actions/runs/38887080746 failed:
 
@@ -231,7 +249,7 @@ Changes must be made through a pull request.
 
 Upstream's ruleset "Require PRs and CI for main" was created 2026-10-11 with no bypass actors, so `.github/workflows/cla.yml` can no longer write `signatures/version1/cla.json`. The last recorded signature is 2026-06-21 (dynamoose/dynamoose#1783), before the ruleset. `recheck` fails the same way. It was flagged to the maintainer on 1813.
 
-**Hold the remaining 14 until this is fixed.** Every one of them would land on the same red check. Once the maintainer adds a bypass actor, a `recheck` comment on 1813 records the signature for all of them.
+All 15 were sent while the blocker was open, so each showed the same red check until 1833.
 
 ## Submission order
 
@@ -251,3 +269,5 @@ Every stacked branch needs a rebase on `upstream/main` after its base merges, an
 After each merge: sync the fork from upstream, delete the fork's copy of that change, and bump `dynamoose-baseline`.
 
 Since https://github.com/MONEI/dynamoose/pull/28 the fork's `lib/` is upstream plus 14 of these branches, and the only fork-only difference is the `readStrict` default (`false` in the fork). That statement comes from the port itself. The 2026-10-16 pass did not re-derive it: merging all 15 branches into one tree needs the conflicts in the table above resolved by hand, which is the submission work, not a check.
+
+The 2026-11-05 coverage commits on 5 and 7 changed `lib/` (the two optional chains and `ancestorHasRule`, see [Coverage](#coverage-2026-10-16)). The fork does not have them yet.
